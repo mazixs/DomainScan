@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    name: Verify extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Syntax-check all sources
+        run: |
+          set -e
+          files=$(find src test scripts -type f \( -name '*.js' -o -name '*.mjs' \) 2>/dev/null || true)
+          for f in $files; do
+            echo "node --check $f"
+            node --check "$f"
+          done
+
+      - name: Unit tests
+        run: node --test
+
+      - name: Validate manifest & locales
+        run: node scripts/validate.mjs
+
+      - name: Package dry-run (verify the extension zips cleanly)
+        run: |
+          mkdir -p dist
+          version=$(node -p "require('./manifest.json').version")
+          zip -r "dist/domainscan-v${version}.zip" manifest.json src _locales icons -x '*.DS_Store'
+          unzip -l "dist/domainscan-v${version}.zip"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: domainscan-package
+          path: dist/*.zip
+          if-no-files-found: error

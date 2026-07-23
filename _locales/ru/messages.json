@@ -1,0 +1,72 @@
+{
+  "appName": { "message": "DomainScan" },
+  "appDesc": { "message": "Смотрите и копируйте сетевые адреса, к которым обращается каждая вкладка браузера." },
+  "actionTitle": { "message": "Открыть DomainScan" },
+
+  "recording": { "message": "Идёт запись" },
+  "paused": { "message": "Приостановлено" },
+  "settings": { "message": "Настройки" },
+  "pauseCapture": { "message": "Приостановить запись" },
+  "resumeCapture": { "message": "Возобновить запись" },
+  "clearList": { "message": "Очистить эту вкладку" },
+
+  "activeTab": { "message": "Активная вкладка" },
+  "uniqueDestinations": { "message": "уникальных адресов" },
+  "showingDestinations": {
+    "message": "Показано адресов: $count$",
+    "placeholders": { "count": { "content": "$1", "example": "7" } }
+  },
+
+  "fingerprintTitle": { "message": "Возможный сбор цифрового отпечатка" },
+  "fingerprintTag": { "message": "Эвристика" },
+  "fingerprintBody": { "message": "На этой странице замечено считывание данных Canvas и запросы к рендереру WebGL. Это повод обратить внимание, а не доказательство отслеживания." },
+
+  "searchPlaceholder": { "message": "Поиск по адресам…" },
+  "display": { "message": "Отображение" },
+  "modeExact": { "message": "Точно" },
+  "modeCollapse": { "message": "Поддомены" },
+  "modeRegistrable": { "message": "Домены" },
+  "modeExactHint": { "message": "Каждый узел точно так, как он наблюдался. Только просмотр, ничего не удаляется." },
+  "modeCollapseHint": { "message": "Поддомены показаны в контексте их домена. Только просмотр, ничего не удаляется." },
+  "modeRegistrableHint": { "message": "Сгруппировано по регистрируемому домену. Только просмотр, ничего не удаляется." },
+
+  "partyFirst": { "message": "Этот сайт" },
+  "partyThird": { "message": "Сторонний" },
+  "partyDirectIp": { "message": "Прямой IP" },
+
+  "copy": { "message": "Копировать" },
+  "copyRow": {
+    "message": "Копировать $host$",
+    "placeholders": { "host": { "content": "$1", "example": "news.example" } }
+  },
+  "copyDomains": { "message": "Копировать домены" },
+  "copyIps": { "message": "Копировать IP-адреса" },
+  "copySelected": { "message": "Копировать выбранное" },
+  "copySelectedCount": {
+    "message": "Копировать выбранное ($count$)",
+    "placeholders": { "count": { "content": "$1", "example": "3" } }
+  },
+  "selectRow": {
+    "message": "Выбрать $host$",
+    "placeholders": { "host": { "content": "$1", "example": "news.example" } }
+  },
+  "selectAll": { "message": "Выбрать все показанные" },
+
+  "copiedDomains": {
+    "message": "Скопировано доменов: $count$",
+    "placeholders": { "count": { "content": "$1", "example": "6" } }
+  },
+  "copiedIps": {
+    "message": "Скопировано IP-адресов: $count$",
+    "placeholders": { "count": { "content": "$1", "example": "1" } }
+  },
+  "copiedSelected": {
+    "message": "Скопировано адресов: $count$",
+    "placeholders": { "count": { "content": "$1", "example": "3" } }
+  },
+  "copyEmpty": { "message": "Нечего копировать" },
+
+  "emptyTitle": { "message": "Пока нет адресов" },
+  "emptyBody": { "message": "Адреса, к которым обращается эта вкладка, появятся здесь по мере просмотра." },
+  "footerNote": { "message": "Новые адреса появляются автоматически и не удаляются в течение сессии этой вкладки." }
+}

@@ -1,0 +1,72 @@
+{
+  "appName": { "message": "DomainScan" },
+  "appDesc": { "message": "See and copy the network destinations each browser tab contacts." },
+  "actionTitle": { "message": "Open DomainScan" },
+
+  "recording": { "message": "Recording" },
+  "paused": { "message": "Paused" },
+  "settings": { "message": "Settings" },
+  "pauseCapture": { "message": "Pause capture" },
+  "resumeCapture": { "message": "Resume capture" },
+  "clearList": { "message": "Clear this tab" },
+
+  "activeTab": { "message": "Active tab" },
+  "uniqueDestinations": { "message": "unique destinations" },
+  "showingDestinations": {
+    "message": "Showing $count$ destinations",
+    "placeholders": { "count": { "content": "$1", "example": "7" } }
+  },
+
+  "fingerprintTitle": { "message": "Possible fingerprinting" },
+  "fingerprintTag": { "message": "Heuristic" },
+  "fingerprintBody": { "message": "Canvas readback and WebGL renderer queries were observed on this page. This is a signal to be aware of, not proof of tracking." },
+
+  "searchPlaceholder": { "message": "Search destinations…" },
+  "display": { "message": "Display" },
+  "modeExact": { "message": "Exact" },
+  "modeCollapse": { "message": "Subdomains" },
+  "modeRegistrable": { "message": "Domains" },
+  "modeExactHint": { "message": "Every hostname exactly as observed. View only, nothing deleted." },
+  "modeCollapseHint": { "message": "Subdomains shown in context of their domain. View only, nothing deleted." },
+  "modeRegistrableHint": { "message": "Grouped by registrable domain. View only, nothing deleted." },
+
+  "partyFirst": { "message": "This site" },
+  "partyThird": { "message": "Third party" },
+  "partyDirectIp": { "message": "Direct IP" },
+
+  "copy": { "message": "Copy" },
+  "copyRow": {
+    "message": "Copy $host$",
+    "placeholders": { "host": { "content": "$1", "example": "news.example" } }
+  },
+  "copyDomains": { "message": "Copy domains" },
+  "copyIps": { "message": "Copy IP addresses" },
+  "copySelected": { "message": "Copy selected" },
+  "copySelectedCount": {
+    "message": "Copy selected ($count$)",
+    "placeholders": { "count": { "content": "$1", "example": "3" } }
+  },
+  "selectRow": {
+    "message": "Select $host$",
+    "placeholders": { "host": { "content": "$1", "example": "news.example" } }
+  },
+  "selectAll": { "message": "Select all shown" },
+
+  "copiedDomains": {
+    "message": "$count$ domains copied",
+    "placeholders": { "count": { "content": "$1", "example": "6" } }
+  },
+  "copiedIps": {
+    "message": "$count$ IP addresses copied",
+    "placeholders": { "count": { "content": "$1", "example": "1" } }
+  },
+  "copiedSelected": {
+    "message": "$count$ destinations copied",
+    "placeholders": { "count": { "content": "$1", "example": "3" } }
+  },
+  "copyEmpty": { "message": "Nothing to copy" },
+
+  "emptyTitle": { "message": "No destinations yet" },
+  "emptyBody": { "message": "Destinations this tab contacts will appear here as you browse." },
+  "footerNote": { "message": "New destinations appear automatically and are never removed during this tab session." }
+}

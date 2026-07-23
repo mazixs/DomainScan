@@ -1,0 +1,683 @@
+<!-- DomainScan — candidate 01 "Simple List". Single-file, self-contained. -->
+<link rel="icon" href="data:,">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DomainScan — destinations for this tab</title>
+<style>
+  :root{
+    --paper:#FCFCFB;
+    --surface:#FFFFFF;
+    --frame:#ECEDEA;
+    --ink:#1D2125;
+    --ink-2:#565D66;
+    --ink-3:#6B727B;
+    --line:#E7E7E4;
+    --line-2:#DBDCD8;
+    --accent:#15706A;
+    --accent-ink:#0F5B56;
+    --accent-soft:#E6F1EF;
+    --accent-bar:#BFDDD8;
+    --focus:#0F5B56;
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,"Liberation Mono",monospace;
+    --ui:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --r:8px;
+    --r-sm:6px;
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;
+    background:var(--frame);
+    color:var(--ink);
+    font-family:var(--ui);
+    font-size:14px;
+    line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+
+  .panel{
+    width:100%;
+    max-width:420px;
+    min-width:320px;
+    margin:0 auto;
+    height:100vh;
+    height:100dvh;
+    display:flex;
+    flex-direction:column;
+    background:var(--paper);
+    overflow-x:hidden;
+    border-left:1px solid var(--line);
+    border-right:1px solid var(--line);
+  }
+
+  /* ---------- header ---------- */
+  .header{
+    flex:none;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:12px 16px;
+    background:var(--surface);
+    border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex;align-items:center;gap:8px;min-width:0}
+  .brand .mark{color:var(--accent);flex:none;display:flex}
+  .brand .name{font-size:15px;font-weight:650;letter-spacing:-0.01em;color:var(--ink);white-space:nowrap}
+  .header .spacer{flex:1 1 auto}
+
+  .live{
+    display:inline-flex;
+    align-items:center;
+    gap:7px;
+    padding:5px 10px 5px 9px;
+    border:1px solid var(--line-2);
+    border-radius:999px;
+    background:var(--paper);
+    font-size:12px;
+    color:var(--ink-2);
+    white-space:nowrap;
+  }
+  .live .dot{
+    width:8px;height:8px;border-radius:50%;
+    background:var(--accent);
+    box-shadow:0 0 0 3px var(--accent-soft);
+    flex:none;
+    animation:pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse{
+    0%,100%{box-shadow:0 0 0 3px var(--accent-soft)}
+    50%{box-shadow:0 0 0 5px rgba(21,112,106,.10)}
+  }
+  .live .label{font-weight:600;color:var(--ink)}
+
+  .icon-btn{
+    flex:none;
+    display:inline-flex;align-items:center;justify-content:center;
+    width:34px;height:34px;
+    border:1px solid transparent;
+    border-radius:var(--r-sm);
+    background:transparent;
+    color:var(--ink-2);
+    cursor:pointer;
+  }
+  .icon-btn:hover{background:var(--paper);border-color:var(--line);color:var(--ink)}
+
+  /* ---------- scroll body ---------- */
+  .body{flex:1 1 auto;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+
+  /* ---------- identity ---------- */
+  .meta{padding:16px 16px 4px}
+  .eyebrow{
+    font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--ink-3);margin:0 0 4px;
+  }
+  .site{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .site-host{font-size:18px;font-weight:650;color:var(--ink);letter-spacing:-0.01em;overflow-wrap:anywhere;margin:0}
+  .site-count{font-size:13px;color:var(--ink-2);white-space:nowrap}
+  .site-count b{color:var(--ink);font-weight:650}
+
+  /* ---------- fingerprint note ---------- */
+  .note{
+    margin:14px 16px 2px;
+    display:flex;gap:10px;
+    padding:11px 12px;
+    background:#F6F6F3;
+    border:1px solid var(--line);
+    border-left:3px solid var(--accent-bar);
+    border-radius:var(--r-sm);
+  }
+  .note .ni{flex:none;color:var(--accent-ink);margin-top:1px}
+  .note-body{min-width:0}
+  .note-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .note-title{font-size:13px;font-weight:650;color:var(--ink)}
+  .note-tag{
+    font-size:10.5px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--ink-2);
+    border:1px solid var(--line-2);border-radius:4px;
+    padding:1px 5px;background:var(--surface);
+  }
+  .note-text{margin:3px 0 0;font-size:12.5px;color:var(--ink-2);line-height:1.45}
+
+  /* ---------- controls (sticky) ---------- */
+  .controls{
+    position:sticky;top:0;z-index:5;
+    background:var(--paper);
+    padding:14px 16px 12px;
+    border-bottom:1px solid var(--line);
+  }
+  .search{position:relative;display:block}
+  .search .si{
+    position:absolute;left:11px;top:50%;transform:translateY(-50%);
+    color:var(--ink-3);pointer-events:none;
+  }
+  .search input{
+    width:100%;
+    height:38px;
+    padding:0 38px 0 36px;
+    border:1px solid var(--line-2);
+    border-radius:var(--r-sm);
+    background:var(--surface);
+    color:var(--ink);
+    font:inherit;font-size:14px;
+  }
+  .search input::placeholder{color:var(--ink-3)}
+  .search .clear{
+    position:absolute;right:5px;top:50%;transform:translateY(-50%);
+    width:30px;height:30px;border:none;border-radius:var(--r-sm);
+    background:transparent;color:var(--ink-3);cursor:pointer;
+    display:none;align-items:center;justify-content:center;
+  }
+  .search .clear.on{display:inline-flex}
+  .search .clear:hover{color:var(--ink);background:var(--paper)}
+
+  .mode{margin-top:12px}
+  .mode-label{
+    font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--ink-3);display:block;margin-bottom:6px;
+  }
+  .seg{
+    display:flex;
+    border:1px solid var(--line-2);
+    border-radius:var(--r-sm);
+    background:var(--surface);
+    padding:2px;
+    gap:2px;
+  }
+  .seg button{
+    flex:1 1 0;
+    min-width:0;
+    height:32px;
+    border:none;
+    border-radius:5px;
+    background:transparent;
+    color:var(--ink-2);
+    font:inherit;font-size:12.5px;font-weight:550;
+    cursor:pointer;
+    white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;
+  }
+  .seg button:hover{color:var(--ink)}
+  .seg button[aria-pressed="true"]{
+    background:var(--accent-soft);
+    color:var(--accent-ink);
+    font-weight:650;
+  }
+  .mode-help{margin:9px 1px 0;font-size:12px;color:var(--ink-2)}
+  .mode-help .muted{color:var(--ink-3)}
+
+  /* ---------- list ---------- */
+  .list{list-style:none;margin:0;padding:0}
+  .row{
+    display:flex;align-items:flex-start;gap:11px;
+    padding:12px 16px;
+    border-bottom:1px solid var(--line);
+    background:var(--surface);
+  }
+  .row.third{box-shadow:inset 3px 0 0 var(--accent-bar)}
+  .row:hover{background:var(--paper)}
+  .row .cb{
+    flex:none;width:18px;height:18px;margin:2px 0 0;
+    accent-color:var(--accent);cursor:pointer;
+  }
+  .row-main{flex:1 1 auto;min-width:0}
+  .host{
+    display:block;font-size:15px;line-height:1.3;font-weight:600;color:var(--ink);
+    overflow-wrap:anywhere;cursor:pointer;
+  }
+  .host .pre{color:var(--ink-3);font-weight:500}
+  .host.ip{font-family:var(--mono);font-weight:600;font-size:14.5px}
+  .sub{
+    margin:4px 0 0;font-size:12.5px;color:var(--ink-2);
+    display:flex;align-items:center;gap:7px;flex-wrap:wrap;
+  }
+  .party{display:inline-flex;align-items:center;gap:6px;font-weight:600}
+  .party .mk{flex:none;width:9px;height:9px;border-radius:50%}
+  .party-first{color:var(--ink-2)}
+  .party-first .mk{background:var(--ink-3)}
+  .party-third{color:var(--accent-ink)}
+  .party-third .mk{background:transparent;border:1.6px solid var(--accent);border-radius:50%}
+  .party-ip{color:var(--ink-2)}
+  .party-ip .mk{border-radius:2px;background:transparent;border:1.6px solid var(--ink-3)}
+  .sep{color:var(--line-2)}
+  .from{color:var(--ink-3)}
+  .from code{font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
+
+  .copy-btn{
+    flex:none;
+    min-height:32px;
+    padding:0 11px;
+    border:1px solid var(--line-2);
+    border-radius:var(--r-sm);
+    background:var(--surface);
+    color:var(--ink);
+    font:inherit;font-size:12.5px;font-weight:600;
+    cursor:pointer;
+    display:inline-flex;align-items:center;gap:6px;
+  }
+  .copy-btn:hover{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft)}
+  .copy-btn .done{display:none;color:var(--accent-ink)}
+  .copy-btn.copied{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
+  .copy-btn.copied .txt{display:none}
+  .copy-btn.copied .done{display:inline-flex;align-items:center;gap:5px}
+
+  .empty{padding:34px 20px;text-align:center;color:var(--ink-2);font-size:13px;background:var(--surface)}
+  .empty b{color:var(--ink);font-weight:650}
+
+  /* ---------- copy bar ---------- */
+  .footer{
+    flex:none;
+    border-top:1px solid var(--line);
+    background:var(--surface);
+    padding:10px 16px 12px;
+  }
+  .toast{
+    min-height:18px;
+    font-size:12px;color:var(--accent-ink);font-weight:600;
+    display:flex;align-items:center;gap:6px;
+    margin:0 0 8px;
+    opacity:0;transition:opacity .18s ease;
+  }
+  .toast.on{opacity:1}
+  .toast svg{flex:none}
+  .copy-actions{display:flex;flex-wrap:wrap;gap:8px}
+  .act{
+    min-height:36px;
+    padding:0 12px;
+    border-radius:var(--r-sm);
+    font:inherit;font-size:13px;font-weight:600;
+    cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;
+    border:1px solid var(--line-2);
+    background:var(--surface);
+    color:var(--ink);
+  }
+  .act.primary{flex:1 1 0;background:var(--accent);border-color:var(--accent);color:#fff}
+  .act.primary:hover{background:var(--accent-ink);border-color:var(--accent-ink)}
+  .act.secondary{flex:1 1 0}
+  .act.secondary:hover{border-color:var(--accent);color:var(--accent-ink)}
+  .act.wide{flex:1 1 100%}
+  .act:disabled{opacity:.5;cursor:not-allowed}
+  .act:disabled:hover{border-color:var(--line-2);color:var(--ink)}
+
+  .sr-only{
+    position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+    overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;
+  }
+
+  /* ---------- focus ---------- */
+  a:focus-visible,button:focus-visible,input:focus-visible,
+  .host:focus-visible,[tabindex]:focus-visible{
+    outline:2px solid var(--focus);
+    outline-offset:2px;
+    border-radius:5px;
+  }
+  .search input:focus-visible{outline-offset:0;border-color:var(--accent)}
+
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+  }
+  @media (max-width:380px){
+    .site-host{font-size:17px}
+    .seg button{font-size:12px}
+  }
+</style>
+
+<div class="panel" role="application" aria-label="DomainScan side panel">
+
+  <header class="header">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 18 18">
+          <rect x="1.6" y="1.6" width="14.8" height="14.8" rx="4.4" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <circle cx="9" cy="9" r="2.4" fill="currentColor"/>
+        </svg>
+      </span>
+      <span class="name">DomainScan</span>
+    </div>
+    <span class="spacer"></span>
+    <span class="live" role="status" aria-label="Recording destinations for this tab">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="label">Recording</span>
+    </span>
+    <button class="icon-btn" type="button" aria-label="Settings" title="Settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>
+      </svg>
+    </button>
+  </header>
+
+  <div class="body">
+
+    <section class="meta" aria-labelledby="site-host">
+      <p class="eyebrow">Active tab</p>
+      <div class="site">
+        <h1 class="site-host" id="site-host">news.example</h1>
+        <span class="site-count"><b>18</b> unique destinations</span>
+      </div>
+    </section>
+
+    <aside class="note" aria-label="Fingerprinting note">
+      <span class="ni" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.6h.01"/>
+        </svg>
+      </span>
+      <div class="note-body">
+        <div class="note-head">
+          <span class="note-title">Possible fingerprinting</span>
+          <span class="note-tag">Heuristic</span>
+        </div>
+        <p class="note-text">Canvas readback and WebGL renderer queries were observed on this page. This is a signal to be aware of, not proof of tracking.</p>
+      </div>
+    </aside>
+
+    <div class="controls">
+      <label class="search">
+        <span class="sr-only">Search destinations</span>
+        <span class="si" aria-hidden="true">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>
+          </svg>
+        </span>
+        <input id="search" type="search" placeholder="Search destinations…" autocomplete="off" spellcheck="false" enterkeyhint="search">
+        <button class="clear" id="clear" type="button" aria-label="Clear search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </label>
+
+      <div class="mode">
+        <span class="mode-label" id="mode-label">Display</span>
+        <div class="seg" role="group" aria-labelledby="mode-label">
+          <button type="button" data-mode="exact" aria-pressed="true">Exact</button>
+          <button type="button" data-mode="subdomains" aria-pressed="false">Subdomains</button>
+          <button type="button" data-mode="domains" aria-pressed="false">Domains</button>
+        </div>
+        <p class="mode-help" id="mode-help"></p>
+      </div>
+    </div>
+
+    <ul class="list" id="list" aria-label="Destinations observed for this tab"></ul>
+
+  </div>
+
+  <footer class="footer">
+    <p class="toast" id="toast" role="status" aria-live="polite">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+      <span id="toast-text"></span>
+    </p>
+    <div class="copy-actions">
+      <button class="act primary" type="button" id="copy-domains">Copy domains</button>
+      <button class="act secondary" type="button" id="copy-ips">Copy IP addresses</button>
+      <button class="act wide" type="button" id="copy-selected" disabled>Copy selected (0)</button>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var DATA = [
+    {host:"news.example",          type:"Document",            party:"first"},
+    {host:"img.news.example",      type:"Image",               party:"first"},
+    {host:"static.edge.test",      type:"Script",              party:"third"},
+    {host:"analytics.vendor.test", type:"Fetch",               party:"third"},
+    {host:"pixel.metrics.test",    type:"Image beacon",        party:"third"},
+    {host:"stream.media.test",     type:"WebSocket handshake", party:"third"},
+    {host:"203.0.113.42",          type:"Direct IP request",   party:"ip"}
+  ];
+
+  var PARTY_LABEL = {first:"This site", third:"Third party", ip:"Direct IP"};
+
+  var HELP = {
+    exact:      "Every hostname exactly as observed.",
+    subdomains: "Subdomain prefixes folded into the parent.",
+    domains:    "Grouped to the registrable domain."
+  };
+
+  var state = { mode:"exact", query:"", selected:{} };
+
+  var els = {
+    list:      document.getElementById("list"),
+    search:    document.getElementById("search"),
+    clear:     document.getElementById("clear"),
+    modeHelp:  document.getElementById("mode-help"),
+    toast:     document.getElementById("toast"),
+    toastText: document.getElementById("toast-text"),
+    copySel:   document.getElementById("copy-selected"),
+    copyDom:   document.getElementById("copy-domains"),
+    copyIps:   document.getElementById("copy-ips"),
+    seg:       document.querySelectorAll(".seg button")
+  };
+
+  // ---- host transforms ----
+  function registrable(h){ var p=h.split("."); return p.length<=2 ? h : p.slice(-2).join("."); }
+  function foldOne(h){ var p=h.split("."); return p.length<=2 ? h : p.slice(1).join("."); }
+
+  // ---- build the rows for the current view ----
+  function buildRows(){
+    var q = state.query.trim().toLowerCase();
+    var src = DATA.filter(function(d){
+      if(!q) return true;
+      return d.host.toLowerCase().indexOf(q) !== -1;
+    });
+
+    var rows = [];
+    if(state.mode === "domains"){
+      var seen = {};
+      src.forEach(function(d){
+        var disp = d.party === "ip" ? d.host : registrable(d.host);
+        if(seen[disp] != null){ rows[seen[disp]].merged++; return; }
+        seen[disp] = rows.length;
+        rows.push({ key:"domains:"+disp, display:disp, type:d.type, party:d.party, from:null, merged:1 });
+      });
+    } else {
+      src.forEach(function(d){
+        var disp = d.host;
+        var from = null;
+        if(state.mode === "subdomains" && d.party !== "ip"){
+          disp = foldOne(d.host);
+          if(disp !== d.host) from = d.host;
+        }
+        rows.push({ key:state.mode+":"+d.host, display:disp, type:d.type, party:d.party, from:from, merged:1 });
+      });
+    }
+    return rows;
+  }
+
+  // split a display host into muted prefix + strong registrable part
+  function hostMarkup(display, isIp){
+    if(isIp) return '<span>'+esc(display)+'</span>';
+    var p = display.split(".");
+    if(p.length <= 2) return '<span>'+esc(display)+'</span>';
+    var pre = p.slice(0, p.length-2).join(".") + ".";
+    var base = p.slice(-2).join(".");
+    return '<span class="pre">'+esc(pre)+'</span>'+esc(base);
+  }
+
+  function esc(s){
+    return String(s).replace(/[&<>"']/g,function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  // ---- render ----
+  function render(){
+    var rows = buildRows();
+
+    // sticky help line
+    var shown = rows.length;
+    var noun = state.mode === "domains" ? (shown === 1 ? "domain" : "domains") : (shown === 1 ? "destination" : "destinations");
+    els.modeHelp.innerHTML = esc(HELP[state.mode]) +
+      ' <span class="muted">· View only, nothing deleted · Showing '+shown+' '+noun+'</span>';
+
+    els.list.innerHTML = "";
+
+    if(rows.length === 0){
+      var li = document.createElement("li");
+      li.className = "empty";
+      li.innerHTML = 'No destinations match <b>&ldquo;'+esc(state.query.trim())+'&rdquo;</b>.<br>Clear the search to see all.';
+      els.list.appendChild(li);
+      updateSelectedButton();
+      return;
+    }
+
+    rows.forEach(function(r, i){
+      var isIp = r.party === "ip";
+      var li = document.createElement("li");
+      li.className = "row" + (r.party === "third" ? " third" : "");
+
+      var cbId = "cb-" + i;
+      var checked = !!state.selected[r.key];
+
+      var subParts = '<span class="party party-'+r.party+'"><span class="mk" aria-hidden="true"></span>'+esc(PARTY_LABEL[r.party])+'</span>'+
+                     '<span class="sep" aria-hidden="true">·</span><span>'+esc(r.type)+'</span>';
+      if(r.from){
+        subParts += '<span class="sep" aria-hidden="true">·</span><span class="from">from <code>'+esc(r.from)+'</code></span>';
+      }
+      if(r.merged > 1){
+        subParts += '<span class="sep" aria-hidden="true">·</span><span class="from">'+r.merged+' requests grouped</span>';
+      }
+
+      li.innerHTML =
+        '<input class="cb" type="checkbox" id="'+cbId+'" '+(checked?"checked":"")+' data-key="'+esc(r.key)+'" '+
+          'aria-label="Select '+esc(r.display)+'">'+
+        '<div class="row-main">'+
+          '<label class="host'+(isIp?" ip":"")+'" for="'+cbId+'">'+hostMarkup(r.display, isIp)+'</label>'+
+          '<p class="sub">'+subParts+'</p>'+
+        '</div>'+
+        '<button class="copy-btn" type="button" data-copy="'+esc(r.display)+'" aria-label="Copy '+esc(r.display)+'">'+
+          '<span class="txt">Copy</span>'+
+          '<span class="done" aria-hidden="true">'+
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Copied</span>'+
+        '</button>';
+
+      els.list.appendChild(li);
+    });
+
+    updateSelectedButton();
+  }
+
+  function selectedKeys(){ return Object.keys(state.selected); }
+
+  function updateSelectedButton(){
+    var n = selectedKeys().length;
+    els.copySel.textContent = "Copy selected (" + n + ")";
+    els.copySel.disabled = n === 0;
+  }
+
+  // ---- clipboard ----
+  function copyText(text){
+    return new Promise(function(resolve){
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(function(){resolve(true);}, function(){resolve(fallback(text));});
+      } else {
+        resolve(fallback(text));
+      }
+    });
+  }
+  function fallback(text){
+    try{
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly","");
+      ta.style.position = "fixed";
+      ta.style.top = "-1000px";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    }catch(e){ return false; }
+  }
+
+  var toastTimer = null;
+  function announce(msg){
+    els.toastText.textContent = msg;
+    els.toast.classList.add("on");
+    if(toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ els.toast.classList.remove("on"); }, 2600);
+  }
+
+  function copyList(values, unitSingular, unitPlural){
+    var clean = values.filter(function(v){ return v; });
+    if(clean.length === 0){ announce("Nothing to copy."); return; }
+    copyText(clean.join("\n")).then(function(ok){
+      var unit = clean.length === 1 ? unitSingular : unitPlural;
+      announce(ok ? ("Copied " + clean.length + " " + unit + " to clipboard.") : "Copy failed. Please try again.");
+    });
+  }
+
+  // current visible rows split by kind
+  function visibleDomains(){
+    return buildRows().filter(function(r){ return r.party !== "ip"; }).map(function(r){ return r.display; });
+  }
+  function visibleIps(){
+    return buildRows().filter(function(r){ return r.party === "ip"; }).map(function(r){ return r.display; });
+  }
+
+  // ---- events ----
+  els.list.addEventListener("click", function(e){
+    var btn = e.target.closest(".copy-btn");
+    if(!btn) return;
+    var val = btn.getAttribute("data-copy");
+    copyText(val).then(function(ok){
+      if(ok){
+        btn.classList.add("copied");
+        setTimeout(function(){ btn.classList.remove("copied"); }, 1500);
+        announce("Copied " + val + " to clipboard.");
+      } else {
+        announce("Copy failed. Please try again.");
+      }
+    });
+  });
+
+  els.list.addEventListener("change", function(e){
+    var cb = e.target.closest(".cb");
+    if(!cb) return;
+    var key = cb.getAttribute("data-key");
+    if(cb.checked) state.selected[key] = true;
+    else delete state.selected[key];
+    updateSelectedButton();
+  });
+
+  Array.prototype.forEach.call(els.seg, function(b){
+    b.addEventListener("click", function(){
+      var mode = b.getAttribute("data-mode");
+      if(mode === state.mode) return;
+      state.mode = mode;
+      state.selected = {}; // keys change meaning between modes
+      Array.prototype.forEach.call(els.seg, function(x){
+        x.setAttribute("aria-pressed", x === b ? "true" : "false");
+      });
+      render();
+    });
+  });
+
+  els.search.addEventListener("input", function(){
+    state.query = els.search.value;
+    els.clear.classList.toggle("on", state.query.length > 0);
+    render();
+  });
+  els.clear.addEventListener("click", function(){
+    els.search.value = "";
+    state.query = "";
+    els.clear.classList.remove("on");
+    els.search.focus();
+    render();
+  });
+
+  els.copyDom.addEventListener("click", function(){ copyList(visibleDomains(), "domain", "domains"); });
+  els.copyIps.addEventListener("click", function(){ copyList(visibleIps(), "IP address", "IP addresses"); });
+  els.copySel.addEventListener("click", function(){
+    copyList(selectedKeys().map(function(k){ return k.split(":").slice(1).join(":"); }), "destination", "destinations");
+  });
+
+  render();
+})();
+</script>

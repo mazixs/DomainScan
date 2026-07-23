@@ -1,0 +1,92 @@
+name: Release
+
+# Auto-release: whenever main is updated, if manifest.json declares a version that has no
+# release yet, verify → package → publish a GitHub Release with the packaged .zip.
+# Bumping "version" in manifest.json and merging to main is all it takes to ship a release.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Auto-release on version bump
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate manifest & locales
+        run: node scripts/validate.mjs
+
+      - name: Unit tests
+        run: node --test
+
+      - name: Read manifest version
+        id: v
+        run: echo "version=$(node -p "require('./manifest.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this version is already released
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v${{ steps.v.outputs.version }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release=skip" >> "$GITHUB_OUTPUT"
+            echo "::notice::Release $tag already exists — nothing to do."
+          else
+            echo "release=create" >> "$GITHUB_OUTPUT"
+            echo "::notice::New version $tag — building a release."
+          fi
+
+      - name: Package extension
+        if: steps.gate.outputs.release == 'create'
+        run: |
+          mkdir -p dist
+          zip -r "dist/domainscan-v${{ steps.v.outputs.version }}.zip" \
+            manifest.json src _locales icons \
+            -x '*.DS_Store'
+
+      - name: Create GitHub Release
+        if: steps.gate.outputs.release == 'create'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.v.outputs.version }}" \
+            "dist/domainscan-v${{ steps.v.outputs.version }}.zip" \
+            --title "DomainScan v${{ steps.v.outputs.version }}" \
+            --generate-notes
+
+      # ---------------------------------------------------------------------------
+      # Optional: publish straight to the Chrome Web Store on each release.
+      # Enable by adding these repository secrets, then uncomment the step:
+      #   CWS_EXTENSION_ID, CWS_CLIENT_ID, CWS_CLIENT_SECRET, CWS_REFRESH_TOKEN
+      # See https://github.com/fregante/chrome-webstore-upload-cli for obtaining them.
+      # ---------------------------------------------------------------------------
+      # - name: Publish to Chrome Web Store
+      #   if: steps.gate.outputs.release == 'create'
+      #   env:
+      #     EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+      #     CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+      #     CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+      #     REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+      #   run: |
+      #     npx --yes chrome-webstore-upload-cli@3 upload \
+      #       --source "dist/domainscan-v${{ steps.v.outputs.version }}.zip" \
+      #       --extension-id "$EXTENSION_ID" \
+      #       --client-id "$CLIENT_ID" \
+      #       --client-secret "$CLIENT_SECRET" \
+      #       --refresh-token "$REFRESH_TOKEN" \
+      #       --auto-publish
