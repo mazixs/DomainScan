@@ -1,121 +1,217 @@
 // DomainScan — fingerprint-probe.js
-// Runs in the MAIN world at document_start. It instruments the page's own
-// fingerprinting-adjacent APIs to DETECT (never block) their use, preserving the
-// original behavior in every case.
-//
-// This is a classic content script: NO import/export, self-contained, no leaked globals.
-// It communicates one-way with the ISOLATED-world relay via window.postMessage.
+// Runs in the page's MAIN world at document_start. It observes selected
+// fingerprinting/environment API reads without blocking them or sending network
+// requests. Signals are forwarded one-way over a private MessageChannel.
 
 (function () {
   'use strict';
 
-  // Guard: if there is no window (unexpected), do nothing.
   if (typeof window === 'undefined') return;
 
-  // Each category is reported at most once per page.
-  var reported = { canvas: false, webgl: false, audio: false };
+  var reported = Object.create(null);
+  var channel;
+  try {
+    channel = new MessageChannel();
+    window.dispatchEvent(new MessageEvent('domainscan:probe-channel', {
+      data: { source: 'domainscan-probe' },
+      ports: [channel.port2]
+    }));
+  } catch (error) {
+    return;
+  }
 
-  // Emit a single signal to the relay. signal is one of 'canvas' | 'webgl' | 'audio'.
   function emit(signal) {
     if (reported[signal]) return;
     reported[signal] = true;
     try {
-      window.postMessage({ source: 'domainscan-probe', signal: signal }, '*');
-    } catch (e) {
-      // Never let a messaging failure affect the page.
+      channel.port1.postMessage({ signal: signal });
+    } catch (error) {
+      // Observation must never affect the page.
     }
   }
 
-  // Wrap a prototype method so it signals `signal` on use, then calls through to
-  // the original and returns its real result. Fully guarded so a missing API or a
-  // wrapping failure never breaks the page.
-  function wrap(proto, name, signal) {
+  function namedWrapper(name, length, invoke) {
+    var wrapper = function () {
+      return invoke(this, arguments);
+    };
     try {
-      if (!proto || typeof proto[name] !== 'function') return;
-      var original = proto[name];
-      var patched = function () {
+      Object.defineProperty(wrapper, 'name', {
+        value: name,
+        configurable: true
+      });
+    } catch (error) {}
+    try {
+      Object.defineProperty(wrapper, 'length', {
+        value: length,
+        configurable: true
+      });
+    } catch (error) {}
+    return wrapper;
+  }
+
+  function replaceMethod(proto, name, createInvoke) {
+    try {
+      if (!proto) return;
+      var descriptor = Object.getOwnPropertyDescriptor(proto, name);
+      if (!descriptor || typeof descriptor.value !== 'function') return;
+      var original = descriptor.value;
+      var patched = namedWrapper(name, original.length, createInvoke(original));
+      Object.defineProperty(proto, name, {
+        configurable: descriptor.configurable,
+        enumerable: descriptor.enumerable,
+        writable: descriptor.writable,
+        value: patched
+      });
+    } catch (error) {
+      // Non-configurable or unusual host objects remain untouched.
+    }
+  }
+
+  function observeMethod(proto, name, signal) {
+    replaceMethod(proto, name, function (original) {
+      return function (receiver, args) {
+        var result = original.apply(receiver, args);
         try {
           emit(signal);
-        } catch (e) {
-          // ignore — detection must never disturb behavior
-        }
-        return original.apply(this, arguments);
+        } catch (error) {}
+        return result;
       };
-      // Preserve arity/name where possible; ignore if the property is non-configurable.
-      try {
-        Object.defineProperty(patched, 'name', { value: name, configurable: true });
-      } catch (e) {}
-      proto[name] = patched;
-    } catch (e) {
-      // Leave the original in place on any failure.
+    });
+  }
+
+  function observeGetter(proto, name, signal) {
+    try {
+      if (!proto) return;
+      var descriptor = Object.getOwnPropertyDescriptor(proto, name);
+      if (!descriptor || typeof descriptor.get !== 'function') return;
+      var originalGet = descriptor.get;
+      var patchedGet = namedWrapper('get ' + name, originalGet.length, function (receiver) {
+        var result = originalGet.call(receiver);
+        try {
+          emit(signal);
+        } catch (error) {}
+        return result;
+      });
+      Object.defineProperty(proto, name, {
+        configurable: descriptor.configurable,
+        enumerable: descriptor.enumerable,
+        get: patchedGet,
+        set: descriptor.set
+      });
+    } catch (error) {
+      // Non-configurable or unusual host objects remain untouched.
     }
   }
 
-  // --- Canvas readback -----------------------------------------------------
-  // signal 'canvas'
+  // Canvas pixel readback. Drawing alone is intentionally not observed.
   try {
     if (typeof CanvasRenderingContext2D !== 'undefined') {
-      wrap(CanvasRenderingContext2D.prototype, 'getImageData', 'canvas');
+      observeMethod(
+        CanvasRenderingContext2D.prototype,
+        'getImageData',
+        'canvas_readback'
+      );
     }
-  } catch (e) {}
+  } catch (error) {}
   try {
     if (typeof HTMLCanvasElement !== 'undefined') {
-      wrap(HTMLCanvasElement.prototype, 'toDataURL', 'canvas');
-      wrap(HTMLCanvasElement.prototype, 'toBlob', 'canvas');
+      observeMethod(HTMLCanvasElement.prototype, 'toDataURL', 'canvas_readback');
+      observeMethod(HTMLCanvasElement.prototype, 'toBlob', 'canvas_readback');
     }
-  } catch (e) {}
+  } catch (error) {}
 
-  // --- WebGL renderer/vendor queries --------------------------------------
-  // signal 'webgl' — only when the queried parameter reveals GPU identity.
-  // UNMASKED_RENDERER_WEBGL = 0x9246, UNMASKED_VENDOR_WEBGL = 0x9245 (WEBGL_debug_renderer_info).
-  var WEBGL_SENSITIVE_PARAMS = {};
-  WEBGL_SENSITIVE_PARAMS[0x9246] = true; // UNMASKED_RENDERER_WEBGL
+  // Only parameters that reveal the renderer/vendor identity are observed.
+  var WEBGL_SENSITIVE_PARAMS = Object.create(null);
   WEBGL_SENSITIVE_PARAMS[0x9245] = true; // UNMASKED_VENDOR_WEBGL
+  WEBGL_SENSITIVE_PARAMS[0x9246] = true; // UNMASKED_RENDERER_WEBGL
   WEBGL_SENSITIVE_PARAMS[0x1F00] = true; // VENDOR
   WEBGL_SENSITIVE_PARAMS[0x1F01] = true; // RENDERER
 
-  function wrapGetParameter(proto) {
-    try {
-      if (!proto || typeof proto.getParameter !== 'function') return;
-      var original = proto.getParameter;
-      var patched = function (pname) {
+  function observeWebGlGetParameter(proto) {
+    replaceMethod(proto, 'getParameter', function (original) {
+      return function (receiver, args) {
+        var result = original.apply(receiver, args);
         try {
-          if (WEBGL_SENSITIVE_PARAMS[pname]) emit('webgl');
-        } catch (e) {}
-        return original.apply(this, arguments);
+          if (WEBGL_SENSITIVE_PARAMS[args[0]] === true) {
+            emit('webgl_renderer');
+          }
+        } catch (error) {}
+        return result;
       };
-      try {
-        Object.defineProperty(patched, 'name', { value: 'getParameter', configurable: true });
-      } catch (e) {}
-      proto.getParameter = patched;
-    } catch (e) {}
+    });
   }
 
   try {
     if (typeof WebGLRenderingContext !== 'undefined') {
-      wrapGetParameter(WebGLRenderingContext.prototype);
+      observeWebGlGetParameter(WebGLRenderingContext.prototype);
     }
-  } catch (e) {}
+  } catch (error) {}
   try {
     if (typeof WebGL2RenderingContext !== 'undefined') {
-      wrapGetParameter(WebGL2RenderingContext.prototype);
+      observeWebGlGetParameter(WebGL2RenderingContext.prototype);
     }
-  } catch (e) {}
+  } catch (error) {}
 
-  // --- Audio fingerprinting ------------------------------------------------
-  // signal 'audio' — reading frequency data is the common fingerprinting step.
+  // Audio data readback. Constructing or rendering audio alone is intentionally
+  // not classified; the page must read analyser data.
   try {
     if (typeof AnalyserNode !== 'undefined') {
-      wrap(AnalyserNode.prototype, 'getFloatFrequencyData', 'audio');
+      observeMethod(
+        AnalyserNode.prototype,
+        'getFloatFrequencyData',
+        'audio_readback'
+      );
+      observeMethod(
+        AnalyserNode.prototype,
+        'getByteFrequencyData',
+        'audio_readback'
+      );
     }
-  } catch (e) {}
-  // Guard OfflineAudioContext presence per the contract; its startRendering is the
-  // usual trigger for offline audio fingerprinting.
+  } catch (error) {}
+  // Local timezone reads. No value is collected; only the access is reported.
   try {
-    if (typeof OfflineAudioContext !== 'undefined' &&
-        OfflineAudioContext.prototype &&
-        typeof OfflineAudioContext.prototype.startRendering === 'function') {
-      wrap(OfflineAudioContext.prototype, 'startRendering', 'audio');
+    if (typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat === 'function') {
+      observeMethod(
+        Intl.DateTimeFormat.prototype,
+        'resolvedOptions',
+        'timezone'
+      );
     }
-  } catch (e) {}
+  } catch (error) {}
+  try {
+    if (typeof Date !== 'undefined') {
+      observeMethod(Date.prototype, 'getTimezoneOffset', 'timezone');
+    }
+  } catch (error) {}
+
+  // Browser language reads.
+  try {
+    if (typeof Navigator !== 'undefined') {
+      observeGetter(Navigator.prototype, 'language', 'language');
+      observeGetter(Navigator.prototype, 'languages', 'language');
+    }
+  } catch (error) {}
+
+  // Explicit access to the browser geolocation API.
+  try {
+    if (typeof Geolocation !== 'undefined') {
+      observeMethod(
+        Geolocation.prototype,
+        'getCurrentPosition',
+        'geolocation'
+      );
+      observeMethod(Geolocation.prototype, 'watchPosition', 'geolocation');
+    }
+  } catch (error) {}
+
+  // High-entropy User-Agent Client Hints.
+  try {
+    if (typeof NavigatorUAData !== 'undefined') {
+      observeMethod(
+        NavigatorUAData.prototype,
+        'getHighEntropyValues',
+        'ua_high_entropy'
+      );
+    }
+  } catch (error) {}
 })();

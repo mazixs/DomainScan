@@ -1,64 +1,90 @@
 # DomainScan
 
-A Chrome-first (Manifest V3) browser extension that continuously records the network
-destinations — hostnames, IP addresses, and WebSocket handshake endpoints — each browser tab
-contacts, and turns them into a calm, inspectable, copyable record for privacy-conscious users.
-It is not a developer console, an ad blocker, or a fear-based security score.
+DomainScan is a local Chrome extension (Manifest V3) that shows the network destinations contacted
+by the active browser tab. It keeps exact hostnames and IP addresses available for inspection and
+copying without turning ordinary requests into a threat score.
 
-Status: **working MVP (v0.1.0).** Capture, per-tab accumulation, the side-panel UI (design
-"Simple List"), distinct copy actions, a fingerprinting heuristic, and EN/RU localization are
-implemented.
+## Current behavior
 
-## Load it in Chrome
+- Every browser tab has an independent history.
+- Paths and subdomains of one registrable domain share that history.
+- Navigating the same tab to another registrable domain starts a fresh history.
+- Switching tabs immediately rebinds the side panel to the selected tab.
+- State survives Manifest V3 service-worker suspension through `chrome.storage.session`.
+- Every observed resolved IP is retained per hostname; direct-IP requests remain visible.
+- The full ICANN and PRIVATE Public Suffix List is bundled for registrable-domain decisions.
+- Local page instrumentation reports exact access to selected browser-environment APIs.
+- English and Russian interfaces are included.
+
+DomainScan does not call GeoIP, analytics, telemetry, or other external services. It observes
+browser events and page API access locally. It does not collect the values returned by timezone,
+language, location, Canvas, WebGL, audio, or User-Agent Client Hints APIs.
+
+## Install unpacked
 
 1. Open `chrome://extensions`.
-2. Enable **Developer mode** (top right).
-3. Click **Load unpacked** and select this repository's root folder (the one with `manifest.json`).
-4. Click the DomainScan toolbar icon to open the side panel, then browse — destinations appear live.
+2. Enable **Developer mode**.
+3. Choose **Load unpacked** and select this repository.
+4. Click the DomainScan toolbar action to open the side panel.
 
-Requires Chrome 114+.
+Chrome 114 or newer is required.
 
-## Develop & verify
+## Verification
 
-```bash
-node --test          # run unit tests for the domain logic (15 tests)
-node --check <file>  # syntax-check any source file
-```
-
-Preview the side panel outside Chrome (it runs in a self-contained demo mode with sample data):
+Node.js 22 is the supported development runtime.
 
 ```bash
-python3 -m http.server 8080
-# then open http://127.0.0.1:8080/src/sidepanel/panel.html
+npm ci
+npm run verify
+npx playwright install chromium
+npm run test:e2e
 ```
 
-## How it works
+`npm run verify` performs syntax checks, validates the manifest and locale parity, checks that the
+generated PSL module matches the vendored snapshot, and runs all unit/worker tests. The Playwright
+suite loads the unpacked extension in Chromium and checks tab isolation, same-site accumulation,
+cross-site reset, service-worker recovery, and IP copying.
 
-- **`src/background/service-worker.js`** — observes requests via non-blocking `chrome.webRequest`,
-  captures resolved IPs in `onResponseStarted`, accumulates per-tab state, and persists it to
-  `chrome.storage.session` so it survives service-worker restarts. Talks to the panel over a
-  long-lived port.
-- **`src/sidepanel/`** — the side-panel UI. Wired to live data over the port; falls back to a demo
-  mode when opened as a plain page.
-- **`src/content/`** — a MAIN-world probe that detects (never blocks) Canvas/WebGL/audio
-  fingerprinting-adjacent API use, and an ISOLATED-world relay that forwards signals to the
-  background. This heuristic is always presented as "possible," never as certainty.
-- **`src/lib/domain.js`** + **`src/lib/psl-data.js`** — pure, unit-tested domain logic (registrable
-  domain via a Public Suffix List subset, IP detection, first/third-party classification).
-- **`src/common/`**, **`_locales/`** — shared message/i18n contract and EN/RU strings.
+Update the vendored PSL and regenerate its runtime module with:
 
-The full integration contract is in **`docs/ARCHITECTURE.md`**. A technical readiness audit is in
-**`output/technical-audit.md`**.
+```bash
+node scripts/update-psl.mjs
+```
+
+The source snapshot, license, and attribution are in `third_party/publicsuffix/` and
+`THIRD_PARTY_NOTICES.md`.
+
+## Architecture
+
+- `src/lib/` contains pure domain, IP, tab-state, and signal logic.
+- `src/background/controller.js` adapts Chrome events to the pure state transitions.
+- `src/background/service-worker.js` is the minimal MV3 entry point.
+- `src/content/` observes selected API calls locally and relays only canonical signal names.
+- `src/sidepanel/` handles active-tab binding, recovery, rendering, and copying.
+- `_locales/` contains matching English and Russian strings.
+- `test/` contains deterministic Node tests; `e2e/` contains Chromium scenarios.
+
+The complete state and message contract is documented in `docs/ARCHITECTURE.md`. The current audit
+and remaining platform limitations are in `output/technical-audit.md`.
 
 ## Permissions
 
-`webRequest` + `<all_urls>` host permission are required to observe destinations for arbitrary
-sites (observing a sub-resource needs access to both the request URL and its initiator). The
-extension only *observes* — it never blocks or modifies requests.
+- `webRequest`: observes request and response metadata without blocking or modifying traffic.
+- `storage`: preserves per-tab state across service-worker suspension.
+- `sidePanel`: provides the persistent browser interface.
+- `<all_urls>` host access: required to observe arbitrary request destinations and instrument the
+  selected local APIs on pages and frames.
 
-## Known limitations
+The extension deliberately does not request the `tabs` permission: the tab identifier and tab
+activation/removal events used here are available without reading sensitive tab properties.
 
-- The bundled Public Suffix List is a curated subset; replace it with the full list from
-  publicsuffix.org for complete registrable-domain accuracy in production.
-- Fingerprinting detection is a heuristic based on API usage, not proof of tracking.
-- IP addresses are only reliably captured for network (non-cached) responses.
+## Platform limits
+
+- Resolved IP addresses are available only when Chrome supplies `onResponseStarted.details.ip`;
+  cached responses and some transport paths may omit it.
+- `webRequest` observes a WebSocket opening handshake, not subsequent message payloads.
+- API-use signals are evidence of access, not proof of tracking. A page can deliberately invoke
+  these APIs without using the returned data, so the heuristic does not establish intent. The
+  extension does not know whether a permission prompt was approved or whether a returned value was
+  useful to the page.
+- `chrome.storage.session` is browser-session storage. Closing a tab removes its DomainScan state.

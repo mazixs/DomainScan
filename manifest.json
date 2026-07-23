@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_appName__",
   "description": "__MSG_appDesc__",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "default_locale": "en",
   "minimum_chrome_version": "114",
   "icons": {
@@ -13,7 +13,6 @@
   },
   "permissions": [
     "webRequest",
-    "tabs",
     "storage",
     "sidePanel"
   ],
@@ -37,17 +36,17 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["src/content/fingerprint-probe.js"],
-      "run_at": "document_start",
-      "all_frames": true,
-      "world": "MAIN"
-    },
-    {
-      "matches": ["<all_urls>"],
       "js": ["src/content/fingerprint-relay.js"],
       "run_at": "document_start",
       "all_frames": true,
       "world": "ISOLATED"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/fingerprint-probe.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
     }
   ]
 }

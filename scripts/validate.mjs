@@ -22,6 +22,17 @@ check(manifest.manifest_version === 3, 'manifest_version must be 3');
 check(typeof manifest.version === 'string' && /^\d+(\.\d+){0,3}$/.test(manifest.version),
   `manifest.version must be a dotted number, got ${JSON.stringify(manifest.version)}`);
 check(!!manifest.default_locale, 'manifest.default_locale is required when using _locales');
+check(!manifest.permissions?.includes('tabs'), 'the unused "tabs" permission must not be requested');
+
+if (existsSync('package.json')) {
+  try {
+    const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
+    check(packageJson.version === manifest.version,
+      `package.json version ${JSON.stringify(packageJson.version)} must match manifest version ${manifest.version}`);
+  } catch (e) {
+    errors.push(`package.json is invalid JSON — ${e.message}`);
+  }
+}
 
 // ---- referenced files exist ----
 const refs = [];

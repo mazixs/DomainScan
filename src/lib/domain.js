@@ -17,8 +17,8 @@ function hasRule(sortedRules, value) {
   return false;
 }
 
-/** Normalize a hostname: lowercase, strip a trailing dot and IPv6 brackets. */
-function normalizeHost(host) {
+/** Normalize a hostname to lowercase ASCII, without a trailing dot or IPv6 brackets. */
+export function normalizeHostname(host) {
   if (!host) return '';
   let h = String(host).trim().toLowerCase().replace(/\.$/, '');
   if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
@@ -134,7 +134,7 @@ export function isIpLiteral(value) {
  * single-label hosts are returned unchanged.
  */
 export function registrableDomain(host) {
-  const h = normalizeHost(host);
+  const h = normalizeHostname(host);
   if (!h) return h;
   const ip = normalizeIpLiteral(h);
   if (ip) return ip;
@@ -179,7 +179,7 @@ export function siteKeyForHost(host) {
  */
 export function classifyParty(destValue, pageHost) {
   if (isIpLiteral(destValue)) return 'ip';
-  const page = normalizeHost(pageHost);
+  const page = normalizeHostname(pageHost);
   if (!page) return 'third';
   return registrableDomain(destValue) === registrableDomain(page) ? 'first' : 'third';
 }

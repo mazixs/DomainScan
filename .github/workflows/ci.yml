@@ -2,46 +2,263 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
-    name: Verify extension
+    name: Verify
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            echo "Checking ${file}"
+            node --check "${file}"
+          done < <(
+            find src test e2e scripts -type f \
+              \( -name '*.js' -o -name '*.mjs' \) -print0
+          )
+
+      - name: Validate extension
+        run: npm run validate
+
+      - name: Run unit and worker tests
+        run: npm test
+
+      - name: Verify generated Public Suffix List data
+        run: npm run psl:check
+
+      - name: Install Playwright Chromium
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: Run extension end-to-end tests
+        run: npm run test:e2e
+
+  package:
+    name: Package verified extension
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      archive_name: ${{ steps.metadata.outputs.archive_name }}
+      archive_sha256: ${{ steps.metadata.outputs.archive_sha256 }}
+      artifact_name: ${{ steps.metadata.outputs.artifact_name }}
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
-      - name: Syntax-check all sources
+      - name: Build package from the allowlist
+        id: metadata
+        shell: bash
         run: |
-          set -e
-          files=$(find src test scripts -type f \( -name '*.js' -o -name '*.mjs' \) 2>/dev/null || true)
-          for f in $files; do
-            echo "node --check $f"
-            node --check "$f"
+          set -euo pipefail
+
+          version="$(node -p "require('./manifest.json').version")"
+          if [[ ! "${version}" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
+            echo "::error::Invalid extension version: ${version}"
+            exit 1
+          fi
+
+          archive_name="domainscan-v${version}.zip"
+          artifact_name="domainscan-package-v${version}-${GITHUB_SHA}"
+          stage="$(mktemp -d)"
+          mkdir -p "${stage}/third_party/publicsuffix" dist
+
+          cp -a manifest.json THIRD_PARTY_NOTICES.md _locales icons src "${stage}/"
+          cp -a \
+            third_party/publicsuffix/LICENSE \
+            third_party/publicsuffix/public_suffix_list.dat \
+            "${stage}/third_party/publicsuffix/"
+
+          required_files=(
+            manifest.json
+            THIRD_PARTY_NOTICES.md
+            third_party/publicsuffix/LICENSE
+            third_party/publicsuffix/public_suffix_list.dat
+          )
+          for required_file in "${required_files[@]}"; do
+            if [[ ! -f "${stage}/${required_file}" ]]; then
+              echo "::error::Required package file is missing: ${required_file}"
+              exit 1
+            fi
           done
 
-      - name: Unit tests
-        run: node --test
+          if find "${stage}" -type l -print -quit | grep -q .; then
+            echo "::error::Symbolic links are not allowed in the extension package"
+            find "${stage}" -type l -print
+            exit 1
+          fi
 
-      - name: Validate manifest & locales
-        run: node scripts/validate.mjs
+          while IFS= read -r -d '' file; do
+            relative="${file#"${stage}/"}"
+            case "${relative}" in
+              manifest.json | \
+              THIRD_PARTY_NOTICES.md | \
+              _locales/*/messages.json | \
+              icons/*.png | \
+              src/*.js | \
+              src/*.css | \
+              src/*.html | \
+              third_party/publicsuffix/LICENSE | \
+              third_party/publicsuffix/public_suffix_list.dat)
+                ;;
+              *)
+                echo "::error::Package contains a file outside the allowlist: ${relative}"
+                exit 1
+                ;;
+            esac
+          done < <(find "${stage}" -type f -print0)
 
-      - name: Package dry-run (verify the extension zips cleanly)
-        run: |
-          mkdir -p dist
-          version=$(node -p "require('./manifest.json').version")
-          zip -r "dist/domainscan-v${version}.zip" manifest.json src _locales icons -x '*.DS_Store'
-          unzip -l "dist/domainscan-v${version}.zip"
+          archive_path="${GITHUB_WORKSPACE}/dist/${archive_name}"
+          (
+            cd "${stage}"
+            find . -type f -printf '%P\0' \
+              | sort -z \
+              | xargs -0 zip -X "${archive_path}"
+          )
 
-      - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+          if [[ "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -ne 1 ]]; then
+            echo "::error::Packaging must produce exactly one ZIP archive"
+            exit 1
+          fi
+
+          unzip -t "${archive_path}"
+          archive_sha256="$(sha256sum "${archive_path}" | cut -d ' ' -f 1)"
+
+          {
+            echo "version=${version}"
+            echo "archive_name=${archive_name}"
+            echo "archive_sha256=${archive_sha256}"
+            echo "artifact_name=${artifact_name}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Upload verified package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: domainscan-package
-          path: dist/*.zip
+          name: ${{ steps.metadata.outputs.artifact_name }}
+          path: dist/${{ steps.metadata.outputs.archive_name }}
           if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Release version
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download the exact verified package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.package.outputs.artifact_name }}
+          path: dist
+
+      - name: Verify downloaded package
+        shell: bash
+        env:
+          ARCHIVE_NAME: ${{ needs.package.outputs.archive_name }}
+          ARCHIVE_SHA256: ${{ needs.package.outputs.archive_sha256 }}
+        run: |
+          set -euo pipefail
+          archive_path="dist/${ARCHIVE_NAME}"
+          if [[ ! -f "${archive_path}" ]]; then
+            echo "::error::Expected archive is missing: ${archive_path}"
+            exit 1
+          fi
+          if [[ "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -ne 1 ]]; then
+            echo "::error::Downloaded artifact must contain exactly one ZIP archive"
+            exit 1
+          fi
+          printf '%s  %s\n' "${ARCHIVE_SHA256}" "${archive_path}" | sha256sum --check -
+          unzip -t "${archive_path}"
+
+      - name: Create release when needed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE_NAME: ${{ needs.package.outputs.archive_name }}
+          TARGET_SHA: ${{ github.sha }}
+          VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          archive_path="dist/${ARCHIVE_NAME}"
+
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::notice::Release ${tag} already exists; leaving it unchanged."
+            exit 0
+          fi
+
+          tag_exists=false
+          ref_json=""
+          if ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" 2>/dev/null)"; then
+            tag_exists=true
+            object_type="$(jq -r '.object.type' <<< "${ref_json}")"
+            object_sha="$(jq -r '.object.sha' <<< "${ref_json}")"
+
+            for _ in {1..10}; do
+              if [[ "${object_type}" == "commit" ]]; then
+                break
+              fi
+              if [[ "${object_type}" != "tag" ]]; then
+                echo "::error::Tag ${tag} points to unsupported object type ${object_type}"
+                exit 1
+              fi
+              tag_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}")"
+              object_type="$(jq -r '.object.type' <<< "${tag_json}")"
+              object_sha="$(jq -r '.object.sha' <<< "${tag_json}")"
+            done
+
+            if [[ "${object_type}" != "commit" || "${object_sha}" != "${TARGET_SHA}" ]]; then
+              echo "::error::Existing tag ${tag} does not resolve to ${TARGET_SHA}"
+              exit 1
+            fi
+          fi
+
+          if [[ "${tag_exists}" == true ]]; then
+            gh release create "${tag}" "${archive_path}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --title "DomainScan ${tag}" \
+              --generate-notes
+          else
+            gh release create "${tag}" "${archive_path}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${TARGET_SHA}" \
+              --title "DomainScan ${tag}" \
+              --generate-notes
+          fi

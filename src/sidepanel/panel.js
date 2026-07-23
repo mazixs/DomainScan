@@ -2,17 +2,23 @@
 // Runs as a real MV3 extension page (talks to the background over a long-lived port) and as a
 // plain file/http page in "demo mode" (seeds sample data, all controls work locally).
 
-import { PORT_NAME, MSG } from '../common/messages.js';
+import { MSG } from '../common/messages.js';
 import { t } from '../common/strings.js';
-import { registrableDomain, isIpLiteral } from '../lib/domain.js';
+import { registrableDomain } from '../lib/domain.js';
+import { summarizeFingerprint } from '../lib/fingerprint.js';
+import { createPanelConnection } from './connection.js';
+import {
+  buildDestinationRows,
+  collectVisibleDomains,
+  collectVisibleIps
+} from './view-model.js';
 
 // ---------------------------------------------------------------------------
 // Environment
 // ---------------------------------------------------------------------------
 const IS_DEMO = typeof chrome === 'undefined' || !(chrome.runtime && chrome.runtime.connect);
 
-/** @type {import('../common/messages.js')} */
-let port = null;
+let connection = null;
 
 // Current TabState we render from (null until first STATE in live mode).
 let state = null;
@@ -21,7 +27,8 @@ let state = null;
 const ui = {
   mode: 'exact',        // 'exact' | 'collapse' | 'registrable'
   query: '',
-  selected: Object.create(null) // rowKey -> display value
+  selected: Object.create(null), // rowKey -> display value
+  connectionStatus: IS_DEMO ? 'connected' : 'connecting'
 };
 
 // ---------------------------------------------------------------------------
@@ -43,6 +50,7 @@ const el = {
   fpTitle: document.getElementById('fp-title'),
   fpTag: document.getElementById('fp-tag'),
   fpBody: document.getElementById('fp-body'),
+  signalList: document.getElementById('signal-list'),
   searchLabel: document.getElementById('search-label'),
   search: document.getElementById('search'),
   modeLabel: document.getElementById('mode-label'),
@@ -62,19 +70,29 @@ const MODE_HINT = {
 };
 const MODE_SEG = { exact: 'modeExact', collapse: 'modeCollapse', registrable: 'modeRegistrable' };
 const PARTY_KEY = { first: 'partyFirst', third: 'partyThird', ip: 'partyDirectIp' };
+const SIGNAL_KEY = {
+  canvas_readback: 'signalCanvasReadback',
+  webgl_renderer: 'signalWebglRenderer',
+  audio_readback: 'signalAudioReadback',
+  timezone: 'signalTimezone',
+  language: 'signalLanguage',
+  geolocation: 'signalGeolocation',
+  ua_high_entropy: 'signalUaHighEntropy'
+};
 
 // ---------------------------------------------------------------------------
 // Static strings (everything user-facing comes from t())
 // ---------------------------------------------------------------------------
 function applyStaticStrings() {
+  if (!IS_DEMO && chrome.i18n && chrome.i18n.getUILanguage) {
+    const language = chrome.i18n.getUILanguage();
+    document.documentElement.lang = language && language.toLowerCase().startsWith('ru') ? 'ru' : 'en';
+  }
   el.brandName.textContent = t('appName');
   el.settingsLabel.textContent = t('settings');
   el.settingsBtn.setAttribute('title', t('settings'));
   el.clearBtn.textContent = t('clearList');
   el.eyebrow.textContent = t('activeTab');
-  el.fpTitle.textContent = t('fingerprintTitle');
-  el.fpTag.textContent = t('fingerprintTag');
-  el.fpBody.textContent = t('fingerprintBody');
   el.searchLabel.textContent = t('searchPlaceholder');
   el.search.setAttribute('placeholder', t('searchPlaceholder'));
   el.search.setAttribute('aria-label', t('searchPlaceholder'));
@@ -105,7 +123,9 @@ function sampleState() {
     const id = kind + '|' + value;
     destinations[id] = {
       id, kind, value, party, requestType, transport,
-      ip: null,
+      ips: kind === 'host' && value === 'news.example'
+        ? { '203.0.113.10': { value: '203.0.113.10', firstSeen: base, lastSeen: base, count: 1 } }
+        : {},
       firstSeen: base + i,
       lastSeen: base + i,
       count: 1
@@ -113,10 +133,16 @@ function sampleState() {
   });
   return {
     tabId: -1,
+    siteKey: 'example',
     pageUrl: 'https://news.example/',
     pageHost: 'news.example',
     destinations,
-    fingerprint: { canvas: true, webgl: true, audio: false, firstSeen: base },
+    fingerprint: {
+      signals: {
+        canvas_readback: { key: 'canvas_readback', count: 1, firstSeen: base, lastSeen: base, frameIds: [0] },
+        webgl_renderer: { key: 'webgl_renderer', count: 1, firstSeen: base, lastSeen: base, frameIds: [0] }
+      }
+    },
     paused: false,
     updatedAt: base
   };
@@ -136,35 +162,7 @@ function destinationsArray() {
  * @returns {{key:string, display:string, kind:string, party:string, requestType:string, grouped:number}[]}
  */
 function buildRows() {
-  const q = ui.query.trim().toLowerCase();
-  const src = destinationsArray().filter((d) => !q || d.value.toLowerCase().includes(q));
-  const rows = [];
-
-  if (ui.mode === 'registrable') {
-    const index = Object.create(null);
-    src.forEach((d) => {
-      const display = d.kind === 'ip' ? d.value : registrableDomain(d.value);
-      const key = 'registrable|' + d.kind + '|' + display;
-      if (index[key] != null) {
-        rows[index[key]].grouped += 1;
-        return;
-      }
-      index[key] = rows.length;
-      rows.push({ key, display, kind: d.kind, party: d.party, requestType: d.requestType, grouped: 1 });
-    });
-  } else {
-    src.forEach((d) => {
-      rows.push({
-        key: ui.mode + '|' + d.id,
-        display: d.value,
-        kind: d.kind,
-        party: d.party,
-        requestType: d.requestType,
-        grouped: 1
-      });
-    });
-  }
-  return rows;
+  return buildDestinationRows(state, { mode: ui.mode, query: ui.query });
 }
 
 // ---------------------------------------------------------------------------
@@ -180,10 +178,14 @@ function render() {
 
 function renderHeader() {
   const paused = !!(state && state.paused);
-  el.live.classList.toggle('paused', paused);
-  el.liveLabel.textContent = paused ? t('paused') : t('recording');
-  el.live.setAttribute('aria-label', paused ? t('paused') : t('recording'));
+  const disconnected = !IS_DEMO && ui.connectionStatus !== 'connected';
+  el.live.classList.toggle('paused', paused || disconnected);
+  const statusText = disconnected ? t('reconnecting') : paused ? t('paused') : t('recording');
+  el.liveLabel.textContent = statusText;
+  el.live.setAttribute('aria-label', statusText);
   el.togglePause.textContent = paused ? t('resumeCapture') : t('pauseCapture');
+  el.togglePause.disabled = disconnected;
+  el.clearBtn.disabled = disconnected;
 
   el.siteHost.textContent = (state && state.pageHost) || '';
 
@@ -195,9 +197,31 @@ function renderHeader() {
 }
 
 function renderFingerprint() {
-  const fp = state && state.fingerprint;
-  const has = !!(fp && (fp.canvas || fp.webgl || fp.audio));
-  el.fpNote.hidden = !has;
+  const signals = state && state.fingerprint && state.fingerprint.signals;
+  const summary = summarizeFingerprint(signals);
+  el.fpNote.hidden = summary.observed.length === 0;
+  if (summary.observed.length === 0) return;
+
+  if (summary.possibleFingerprinting) {
+    el.fpTitle.textContent = t('fingerprintTitle');
+    el.fpTag.textContent = t('fingerprintTag');
+    el.fpBody.textContent = t('fingerprintBody');
+  } else if (summary.locationRequested) {
+    el.fpTitle.textContent = t('locationTitle');
+    el.fpTag.textContent = t('apiObservationTag');
+    el.fpBody.textContent = t('locationBody');
+  } else {
+    el.fpTitle.textContent = t('environmentTitle');
+    el.fpTag.textContent = t('apiObservationTag');
+    el.fpBody.textContent = t('environmentBody');
+  }
+
+  el.signalList.textContent = '';
+  for (const signal of summary.observed) {
+    const item = document.createElement('li');
+    item.textContent = t(SIGNAL_KEY[signal]);
+    el.signalList.appendChild(item);
+  }
 }
 
 function renderModeHelp() {
@@ -285,7 +309,7 @@ function rowNode(r, i) {
 
   const rtype = document.createElement('span');
   rtype.className = 'rtype';
-  rtype.textContent = r.requestType;
+  rtype.textContent = r.requestTypes.map((type) => t('requestType_' + type)).join(', ');
   sub.appendChild(rtype);
 
   if (r.grouped > 1) {
@@ -298,6 +322,22 @@ function rowNode(r, i) {
   }
 
   main.appendChild(sub);
+
+  if (!isIp && r.ips.length > 0) {
+    const details = document.createElement('details');
+    details.className = 'ip-details';
+    const summary = document.createElement('summary');
+    summary.textContent = t('resolvedIps', { count: r.ips.length });
+    const addresses = document.createElement('ul');
+    addresses.className = 'ip-addresses';
+    for (const address of r.ips) {
+      const item = document.createElement('li');
+      item.textContent = address;
+      addresses.appendChild(item);
+    }
+    details.append(summary, addresses);
+    main.appendChild(details);
+  }
   li.appendChild(main);
 
   // per-row copy
@@ -422,7 +462,8 @@ async function copyBulk(values, copiedKey) {
 
 // current visible rows split by kind
 function visibleByKind(kind) {
-  return buildRows().filter((r) => (kind === 'ip' ? r.kind === 'ip' : r.kind !== 'ip')).map((r) => r.display);
+  const rows = buildRows();
+  return kind === 'ip' ? collectVisibleIps(rows) : collectVisibleDomains(rows);
 }
 
 // ---------------------------------------------------------------------------
@@ -432,8 +473,8 @@ function setPaused(paused) {
   if (IS_DEMO) {
     if (state) { state.paused = paused; }
     render();
-  } else if (port) {
-    port.postMessage({ type: MSG.SET_PAUSED, paused });
+  } else if (connection) {
+    connection.post({ type: MSG.SET_PAUSED, paused });
   }
 }
 
@@ -442,8 +483,8 @@ function clearTab() {
   if (IS_DEMO) {
     if (state) { state.destinations = Object.create(null); }
     render();
-  } else if (port) {
-    port.postMessage({ type: MSG.CLEAR });
+  } else if (connection) {
+    connection.post({ type: MSG.CLEAR });
   }
 }
 
@@ -554,24 +595,24 @@ function wireEvents() {
 // ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
-async function connectLive() {
-  try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    const tabId = tabs && tabs[0] ? tabs[0].id : undefined;
-    port = chrome.runtime.connect({ name: PORT_NAME });
-    port.onMessage.addListener((msg) => {
-      if (msg && msg.type === MSG.STATE) {
-        state = msg.state;
-        render();
+function connectLive() {
+  connection = createPanelConnection({
+    chromeApi: chrome,
+    onState(nextState) {
+      if (!state || state.tabId !== nextState.tabId || state.siteKey !== nextState.siteKey) {
+        ui.selected = Object.create(null);
       }
-    });
-    port.onDisconnect.addListener(() => { port = null; });
-    port.postMessage({ type: MSG.HELLO, tabId });
-  } catch (err) {
-    // If anything about the live wiring fails, fall back to a rendered empty panel.
-    state = state || null;
-    render();
-  }
+      state = nextState;
+      render();
+    },
+    onConnectionChange(status) {
+      ui.connectionStatus = status;
+      renderHeader();
+    },
+    onError() {
+      // Connection recovery is automatic; keep the last rendered state visible.
+    }
+  });
 }
 
 function init() {
