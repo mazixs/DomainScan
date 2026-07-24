@@ -5,6 +5,7 @@
 
   "recording": { "message": "Recording" },
   "paused": { "message": "Paused" },
+  "reconnecting": { "message": "Reconnecting…" },
   "settings": { "message": "Settings" },
   "pauseCapture": { "message": "Pause capture" },
   "resumeCapture": { "message": "Resume capture" },
@@ -19,7 +20,19 @@
 
   "fingerprintTitle": { "message": "Possible fingerprinting" },
   "fingerprintTag": { "message": "Heuristic" },
-  "fingerprintBody": { "message": "Canvas readback and WebGL renderer queries were observed on this page. This is a signal to be aware of, not proof of tracking." },
+  "fingerprintBody": { "message": "Sensitive browser-environment access or several weaker signals were observed. This is API-use evidence, not proof of tracking." },
+  "environmentTitle": { "message": "Browser environment accessed" },
+  "environmentBody": { "message": "The page read a browser-environment value. A single weak signal is not classified as fingerprinting." },
+  "locationTitle": { "message": "Location access requested" },
+  "locationBody": { "message": "The page called the Geolocation API. The browser may still deny the request or ask for permission." },
+  "apiObservationTag": { "message": "API observation" },
+  "signalCanvasReadback": { "message": "Canvas pixel or export data was read" },
+  "signalWebglRenderer": { "message": "WebGL renderer or vendor was queried" },
+  "signalAudioReadback": { "message": "Audio analyser data was read" },
+  "signalTimezone": { "message": "Local time zone or UTC offset was read" },
+  "signalLanguage": { "message": "Browser language settings were read" },
+  "signalGeolocation": { "message": "Geolocation API was called" },
+  "signalUaHighEntropy": { "message": "High-entropy browser/device hints were requested" },
 
   "searchPlaceholder": { "message": "Search destinations…" },
   "display": { "message": "Display" },
@@ -33,6 +46,21 @@
   "partyFirst": { "message": "This site" },
   "partyThird": { "message": "Third party" },
   "partyDirectIp": { "message": "Direct IP" },
+  "resolvedIps": {
+    "message": "Resolved IP addresses: $count$",
+    "placeholders": { "count": { "content": "$1", "example": "2" } }
+  },
+
+  "requestType_document": { "message": "document" },
+  "requestType_image": { "message": "image" },
+  "requestType_script": { "message": "script" },
+  "requestType_style": { "message": "style" },
+  "requestType_fetch": { "message": "request" },
+  "requestType_beacon": { "message": "beacon" },
+  "requestType_media": { "message": "media" },
+  "requestType_font": { "message": "font" },
+  "requestType_websocket": { "message": "WebSocket" },
+  "requestType_other": { "message": "other" },
 
   "copy": { "message": "Copy" },
   "copyRow": {

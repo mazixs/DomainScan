@@ -5,6 +5,7 @@
 
   "recording": { "message": "Идёт запись" },
   "paused": { "message": "Приостановлено" },
+  "reconnecting": { "message": "Переподключение…" },
   "settings": { "message": "Настройки" },
   "pauseCapture": { "message": "Приостановить запись" },
   "resumeCapture": { "message": "Возобновить запись" },
@@ -19,7 +20,19 @@
 
   "fingerprintTitle": { "message": "Возможный сбор цифрового отпечатка" },
   "fingerprintTag": { "message": "Эвристика" },
-  "fingerprintBody": { "message": "На этой странице замечено считывание данных Canvas и запросы к рендереру WebGL. Это повод обратить внимание, а не доказательство отслеживания." },
+  "fingerprintBody": { "message": "Замечен доступ к чувствительным данным окружения браузера или несколько слабых признаков. Это свидетельство вызова API, а не доказательство отслеживания." },
+  "environmentTitle": { "message": "Доступ к окружению браузера" },
+  "environmentBody": { "message": "Страница прочитала параметр окружения браузера. Один слабый признак не считается сбором цифрового отпечатка." },
+  "locationTitle": { "message": "Запрошен доступ к местоположению" },
+  "locationBody": { "message": "Страница вызвала API геолокации. Браузер всё ещё может отклонить запрос или запросить разрешение." },
+  "apiObservationTag": { "message": "Наблюдение API" },
+  "signalCanvasReadback": { "message": "Считаны пиксели или экспортные данные Canvas" },
+  "signalWebglRenderer": { "message": "Запрошены рендерер или производитель WebGL" },
+  "signalAudioReadback": { "message": "Считаны данные аудиоанализатора" },
+  "signalTimezone": { "message": "Считаны местный часовой пояс или смещение UTC" },
+  "signalLanguage": { "message": "Считаны языковые настройки браузера" },
+  "signalGeolocation": { "message": "Вызван API геолокации" },
+  "signalUaHighEntropy": { "message": "Запрошены подробные сведения о браузере или устройстве" },
 
   "searchPlaceholder": { "message": "Поиск по адресам…" },
   "display": { "message": "Отображение" },
@@ -33,6 +46,21 @@
   "partyFirst": { "message": "Этот сайт" },
   "partyThird": { "message": "Сторонний" },
   "partyDirectIp": { "message": "Прямой IP" },
+  "resolvedIps": {
+    "message": "Разрешённые IP-адреса: $count$",
+    "placeholders": { "count": { "content": "$1", "example": "2" } }
+  },
+
+  "requestType_document": { "message": "документ" },
+  "requestType_image": { "message": "изображение" },
+  "requestType_script": { "message": "скрипт" },
+  "requestType_style": { "message": "стиль" },
+  "requestType_fetch": { "message": "запрос" },
+  "requestType_beacon": { "message": "маяк" },
+  "requestType_media": { "message": "медиа" },
+  "requestType_font": { "message": "шрифт" },
+  "requestType_websocket": { "message": "WebSocket" },
+  "requestType_other": { "message": "прочее" },
 
   "copy": { "message": "Копировать" },
   "copyRow": {

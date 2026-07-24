@@ -36,7 +36,6 @@ wildcard, and exception rules.
 - `recordResolvedIp(state, host, ip, now)`
 - `recordFingerprintSignal(state, signal, frameId, now)`
 - `normalizeTabState(value)`
-- `reconcileTabState(stored, live)`
 
 The service worker remains a Chrome API adapter: it maps browser events into these transitions,
 persists the result, and publishes state to subscribed panel ports.
@@ -90,7 +89,7 @@ Signals are stored independently with `firstSeen`, `lastSeen`, `count`, and obse
 
 - `canvas_readback`: `getImageData`, `toDataURL`, or `toBlob`;
 - `webgl_renderer`: sensitive renderer/vendor values requested through `getParameter`;
-- `audio_readback`: analyser frequency data or offline audio rendering;
+- `audio_readback`: analyser frequency data;
 - `timezone`: `Intl.DateTimeFormat().resolvedOptions()` or `Date#getTimezoneOffset`;
 - `language`: reads of `navigator.language` or `navigator.languages`;
 - `geolocation`: `getCurrentPosition` or `watchPosition`;

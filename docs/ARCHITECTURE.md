@@ -1,160 +1,170 @@
-# DomainScan — Architecture & Integration Contract
+# DomainScan architecture
 
-This is the **single source of truth** for how the DomainScan Chrome extension (MV3) is wired
-together. Every subagent building a zone MUST read and follow this file so the parts integrate
-cleanly. Do not change the shared contracts (record shape, message protocol, module APIs) — build
-against them.
+This document is the runtime contract for the Chrome-first Manifest V3 extension.
 
-## Tech baseline
+## Runtime boundaries
 
-- Manifest V3, Chrome-first, `chrome.*` namespace, `minimum_chrome_version: 114`.
-- **ES modules everywhere except content scripts.** The service worker is `type: "module"`,
-  the side panel loads `panel.js` as `<script type="module">`. Content scripts CANNOT use
-  `import` — they are self-contained.
-- **MV3 page CSP forbids inline JS.** `panel.html` must have NO inline `<script>` and NO inline
-  event handlers (`onclick=…`). All JS lives in `panel.js`. CSS may be an external file.
-- No external network, no CDN, no frameworks. Everything ships in the package.
+Production code has no runtime dependencies and makes no DomainScan-owned network requests.
+Chrome's non-blocking `webRequest` events provide request metadata and resolved IPs. Content
+scripts observe a small allowlist of page API calls and send only signal names to the extension.
 
-## File layout & ownership
+The extension has four layers:
 
-```
-manifest.json                      (foundation)
-icons/                             (foundation) icon16/32/48/128.png
-docs/ARCHITECTURE.md               (foundation) this file
-src/
-  common/
-    messages.js                    (foundation) message + storage constants
-    strings.js                     (foundation) t() i18n helper + English fallback dict
-  lib/
-    psl-data.js                    (foundation) Public Suffix List subset
-    domain.js                      (foundation) pure domain logic (registrable, party, ip)
-  background/
-    service-worker.js              [ZONE: BACKGROUND]
-  sidepanel/
-    panel.html                     [ZONE: SIDE PANEL]
-    panel.css                      [ZONE: SIDE PANEL]
-    panel.js                       [ZONE: SIDE PANEL]
-  content/
-    fingerprint-probe.js           [ZONE: CONTENT]  (MAIN world, patches page APIs)
-    fingerprint-relay.js           [ZONE: CONTENT]  (ISOLATED world, forwards to background)
-_locales/
-  en/messages.json                 (foundation)
-  ru/messages.json                 [ZONE: CONTENT]  (translate en → ru)
-test/
-  domain.test.mjs                  [ZONE: CONTENT]  (unit tests for src/lib/domain.js)
-```
+1. `src/lib/`: pure normalization and immutable state transitions.
+2. `src/background/controller.js`: Chrome event adapter, persistence, and subscriptions.
+3. `src/content/`: MAIN-world instrumentation plus an ISOLATED-world relay.
+4. `src/sidepanel/`: active-tab connection, derived rows, rendering, and copy actions.
 
-Each zone owns ONLY its files. Never edit foundation files or another zone's files.
+`src/background/service-worker.js` only creates the controller with the global `chrome` object.
 
-## Shared data model
+## Site and tab lifecycle
 
-A single observed destination:
+Each `TabState` belongs to one numeric Chrome tab ID. Its `siteKey` is:
+
+- the normalized IP for a direct-IP top-level page;
+- otherwise the registrable domain calculated with the bundled full ICANN and PRIVATE PSL.
+
+A main-frame navigation follows these rules:
+
+- first page: initialize the site session;
+- same `siteKey`: update the visible page origin/host and retain all evidence;
+- different `siteKey`: clear destinations and environment signals, retain the tab ID and pause
+  preference.
+
+Paths, ports, and arbitrary subdomain depth do not split a site session. Closing a tab removes its
+session-storage record. Tabs never share destination objects.
+
+The panel sends `HELLO` with the active tab ID over a long-lived port. It sends another `HELLO`
+after `tabs.onActivated` or a browser-window focus change. The controller atomically moves that
+port between per-tab subscriber sets. On service-worker disconnect the panel reconnects with
+bounded backoff (250 ms up to 4 s) and binds the current active tab again.
+
+## State model
 
 ```js
-/**
- * @typedef {Object} Destination
- * @property {string}  id           `${kind}|${value}`  (stable key)
- * @property {'host'|'ip'} kind
- * @property {string}  value        hostname (lowercased, no trailing dot) or IP literal
- * @property {'first'|'third'|'ip'} party
- * @property {string}  requestType  'document'|'image'|'script'|'fetch'|'xhr'|'beacon'|'websocket'|'other'
- * @property {'http'|'https'|'ws'|'wss'|'other'} transport
- * @property {string|null} ip       resolved IP for a host when known (from onResponseStarted)
- * @property {number}  firstSeen    epoch ms
- * @property {number}  lastSeen     epoch ms
- * @property {number}  count        times observed
- */
+{
+  tabId: 42,
+  siteKey: "example.co.uk",
+  pageUrl: "https://shop.example.co.uk",
+  pageHost: "shop.example.co.uk",
+  destinations: {
+    "host|cdn.example.co.uk": {
+      id: "host|cdn.example.co.uk",
+      kind: "host",
+      value: "cdn.example.co.uk",
+      party: "first",
+      requestType: "script",
+      transport: "https",
+      ips: {
+        "203.0.113.10": {
+          value: "203.0.113.10",
+          firstSeen: 1720000000000,
+          lastSeen: 1720000001000,
+          count: 2
+        }
+      },
+      firstSeen: 1720000000000,
+      lastSeen: 1720000001000,
+      count: 2
+    }
+  },
+  fingerprint: {
+    signals: {
+      timezone: {
+        key: "timezone",
+        firstSeen: 1720000000000,
+        lastSeen: 1720000001000,
+        count: 2,
+        frameIds: [0]
+      }
+    }
+  },
+  paused: false,
+  updatedAt: 1720000001000
+}
 ```
 
-Per-tab state (what the panel renders):
+Hostnames are lower-case ASCII labels. Unicode names are normalized to Punycode. IPv4 and IPv6
+literals are strictly validated and canonicalized before becoming keys. Persisted MVP records are
+migrated by `normalizeTabState`.
 
-```js
-/**
- * @typedef {Object} TabState
- * @property {number}  tabId
- * @property {string|null} pageUrl
- * @property {string|null} pageHost      hostname of the tab's top document
- * @property {Object.<string, Destination>} destinations   keyed by Destination.id
- * @property {{canvas:boolean, webgl:boolean, audio:boolean, firstSeen:number|null}} fingerprint
- * @property {boolean} paused
- * @property {number}  updatedAt
- */
-```
+`pageUrl` stores only the origin, not paths, queries, or fragments.
 
-## Message protocol (see src/common/messages.js)
+## Network observations
 
-The panel talks to the background over a **long-lived port** named `PORT_NAME`.
+`onBeforeRequest` records the destination and request category. A request ID is correlated with
+the active site session. `onResponseStarted` may add its normalized IP only if the request ID,
+tab, hostname, and site session still match. This prevents a late response from the previous site
+being attached to a new site session.
 
-1. Panel: `const port = chrome.runtime.connect({ name: PORT_NAME })`, then
-   `port.postMessage({ type: MSG.HELLO, tabId })` using the active tab's id.
-2. Background: on connect, remembers the port + tabId, and immediately posts the current state:
-   `port.postMessage({ type: MSG.STATE, state })`. It re-posts `MSG.STATE` whenever that tab's
-   state changes (new destination, fingerprint signal, pause toggle, clear).
-3. Panel → background control messages over the same port:
-   - `{ type: MSG.SET_PAUSED, paused: boolean }`
-   - `{ type: MSG.CLEAR }`   (clears the current tab's destinations)
-4. Content relay → background (one-shot): `chrome.runtime.sendMessage({ type: MSG.FINGERPRINT,
-   signals: { canvas?:true, webgl?:true, audio?:true } })`. Background merges signals into the
-   sender tab's `fingerprint` and pushes an updated `MSG.STATE`.
+One hostname retains all unique IPs with first/last timestamps and counts. The panel exposes those
+addresses under the host row. “Copy IP addresses” combines visible resolved and direct IP values
+and removes duplicates.
 
-Persistence: background mirrors each `TabState` into `chrome.storage.session` under `tabKey(tabId)`
-so accumulation survives service-worker restarts. On startup the background rehydrates from session
-storage.
+Pause suppresses new destinations, IPs, and page API signals. A main-frame navigation is still
+processed while paused so the panel never displays a previous site's evidence under a new host.
 
-## src/common/messages.js API (foundation — already written)
+## Page API evidence
 
-```js
-export const PORT_NAME = 'domainscan';
-export const MSG = { HELLO:'HELLO', STATE:'STATE', SET_PAUSED:'SET_PAUSED', CLEAR:'CLEAR', FINGERPRINT:'FINGERPRINT' };
-export const STORAGE_PREFIX = 'tab:';
-export function tabKey(tabId) { return STORAGE_PREFIX + tabId; }
-```
+The MAIN-world probe preserves original method/getter behavior and observes each category at most
+once per document:
 
-## src/lib/domain.js API (foundation — already written)
+| Signal | Observed access |
+|---|---|
+| `canvas_readback` | `getImageData`, `toDataURL`, `toBlob` |
+| `webgl_renderer` | renderer/vendor parameters through WebGL `getParameter` |
+| `audio_readback` | analyser frequency data |
+| `timezone` | `resolvedOptions` or `getTimezoneOffset` |
+| `language` | `navigator.language` or `navigator.languages` |
+| `geolocation` | `getCurrentPosition` or `watchPosition` |
+| `ua_high_entropy` | `getHighEntropyValues` |
 
-```js
-export function isIpLiteral(value): boolean          // IPv4 / IPv6 literal
-export function registrableDomain(host): string      // eTLD+1 via PSL; falls back to last two labels
-export function classifyParty(destValue, pageHost): 'first'|'third'|'ip'
-```
+Ordinary JavaScript downloads, Canvas drawing, and WebGL rendering do not create these signals.
+No returned value, coordinates, language, timezone, renderer string, audio data, or UA hint is
+sent to the extension.
 
-- BACKGROUND uses `classifyParty(value, pageHost)` to set `Destination.party`, and `isIpLiteral`
-  to set `kind`.
-- SIDE PANEL uses `registrableDomain` for the "Collapse subdomains" / "Registrable domains" display
-  modes and MUST classify with the same functions so first/third labelling matches the background.
+The ISOLATED relay registers first and accepts one synchronous `MessageChannel` from the MAIN probe
+at `document_start`; later replacement channels and ordinary page `postMessage` calls are ignored.
+It accepts each signal at most once per frame document, and the controller binds messages to the
+current document/site when Chrome supplies document IDs. A page can still deliberately call an
+instrumented API without using its result, so these signals remain heuristic evidence rather than
+proof of intent.
 
-## src/common/strings.js API (foundation — already written)
+Presentation is derived from evidence:
 
-```js
-export function t(key, substitutions?): string   // chrome.i18n.getMessage(key) || English fallback
-export const FALLBACK_EN: Record<string,string>  // English strings for demo/file:// mode
-```
+- one weak environment signal: neutral environment observation;
+- at least two weak environment signals, or a sensitive fingerprint-related signal: possible
+  fingerprinting;
+- geolocation: an explicit API-call observation, not a claim that location was obtained.
 
-- SIDE PANEL: import `t` and use it for EVERY user-facing string. Never hardcode display text.
-- The full key list is in `_locales/en/messages.json`. `_locales/ru/messages.json` mirrors the same
-  keys in Russian (ZONE: CONTENT). Do not invent new keys without adding them to en + FALLBACK_EN.
+These summaries can coexist in the stored model. The UI lists exact observed signal names and
+never assigns a numeric risk score.
 
-## Side-panel demo/standalone mode (REQUIRED for verification)
+## Messages and persistence
 
-`panel.js` must run BOTH as a real extension page and when opened as a plain file (no `chrome`
-APIs). Detect with `typeof chrome === 'undefined' || !chrome.runtime?.connect`. In that fallback
-("demo mode") seed the panel with this exact sample data so the UI renders standalone:
+`src/common/messages.js` defines:
 
-1. news.example — document — first party
-2. img.news.example — image — first party
-3. static.edge.test — script — third party
-4. analytics.vendor.test — fetch — third party
-5. pixel.metrics.test — image beacon (requestType 'beacon') — third party
-6. stream.media.test — WebSocket handshake (requestType 'websocket', transport 'wss') — third party
-7. 203.0.113.42 — direct IP request (kind 'ip', party 'ip') — direct IP
+- port: `domainscan`;
+- panel messages: `HELLO`, `SET_PAUSED`, `CLEAR`;
+- background message: `STATE`;
+- content message: `FINGERPRINT`.
 
-pageHost = `news.example`, 18 unique total (show the 7 above), fingerprint `{canvas:true, webgl:true}`.
+State is mirrored to `chrome.storage.session` under `tab:<id>`. Background initialization
+rehydrates storage before queued browser events are applied. Writes are ordered per tab; a storage
+failure is logged without blocking the live subscriber update.
 
-## Accessibility & visual contract (all UI work)
+Diagnostics include an operation name, tab ID, and error message only. They do not include full
+URLs, page values, or copied data.
 
-Follow the chosen design **candidate A "Simple List"** at `design-demos/candidates/01-simple-list.html`
-as the visual reference. Light theme, calm, native-feeling; NO dark "cockpit" look. WCAG 2.2 AA:
-keyboard operable, `:focus-visible`, `prefers-reduced-motion`, contrast ≥4.5:1, body ≥14px /
-annotations ≥12px, targets ≥32px, non-color-only status. No horizontal overflow at 360/420/520px.
-Distinct copy targets (domains / IPs / selected) — never one "copy all". Fingerprinting is always a
-labelled heuristic, never stated as certainty.
+## Verification and delivery
+
+- `npm test`: pure state, PSL/IP, controller, connection, view-model, and content-instrumentation
+  tests.
+- `npm run test:e2e`: real unpacked-extension scenarios in Playwright Chromium.
+- `npm run verify`: syntax, manifest/locale, generated PSL, and Node tests.
+- `.github/workflows/ci.yml`: `verify -> package -> release`.
+
+Pull requests verify and package but never release. A push to `main` releases only after all
+verification succeeds. Packaging uses an allowlist, rejects symbolic links, validates the ZIP, and
+includes PSL attribution/source. Only the release job receives `contents: write`, and it downloads
+the already verified artifact instead of executing repository code.

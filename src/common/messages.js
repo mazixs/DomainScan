@@ -9,7 +9,7 @@ export const MSG = {
   STATE: 'STATE',            // bg -> panel  { type, state: TabState }
   SET_PAUSED: 'SET_PAUSED',  // panel -> bg  { type, paused: boolean }
   CLEAR: 'CLEAR',            // panel -> bg  { type }
-  FINGERPRINT: 'FINGERPRINT' // content -> bg { type, signals: {canvas?, webgl?, audio?} }
+  FINGERPRINT: 'FINGERPRINT' // content -> bg { type, signal: canonicalSignalName }
 };
 
 export const STORAGE_PREFIX = 'tab:';

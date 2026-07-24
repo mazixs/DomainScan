@@ -1,0 +1,20 @@
+{
+  "name": "domainscan",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:e2e": "playwright test",
+    "validate": "node scripts/validate.mjs",
+    "psl:check": "node scripts/update-psl.mjs --check",
+    "check:syntax": "find src test e2e scripts -type f \\( -name '*.js' -o -name '*.mjs' \\) -print0 | xargs -0 -r -n1 node --check",
+    "verify": "npm run check:syntax && npm run validate && npm run psl:check && npm test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
