@@ -307,3 +307,49 @@ test('the panel states since when the record for this site is kept', async () =>
   await page.close();
   await panel.close();
 });
+
+test('keeps an expanded IP list and keyboard focus while new destinations arrive', async () => {
+  const page = await context.newPage();
+  await page.goto(url('live.alpha.test'));
+  const panel = await openPanelFor(page);
+  const row = panel.locator('#list li.row').filter({ hasText: 'cdn.alpha.test' });
+  await expect(row).toHaveCount(1);
+
+  await row.locator('.ip-details summary').click();
+  await row.locator('.copy-btn').focus();
+  await expect(row.locator('.ip-details')).toHaveJSProperty('open', true);
+
+  // A destination arriving from the page must not disturb what the user is doing.
+  await page.evaluate((target) => fetch(target).catch(() => {}), url('later.alpha.test', '/asset'));
+  await expect(panel.locator('#list')).toContainText('later.alpha.test');
+
+  await expect(row.locator('.ip-details')).toHaveJSProperty('open', true);
+  expect(await panel.evaluate(() => {
+    const active = document.activeElement;
+    return active ? active.className : null;
+  })).toContain('copy-btn');
+
+  await page.close();
+  await panel.close();
+});
+
+test('reuses the row element of a destination instead of rebuilding the list', async () => {
+  const page = await context.newPage();
+  await page.goto(url('stable.alpha.test'));
+  const panel = await openPanelFor(page);
+  await expect(panel.locator('#list')).toContainText('cdn.alpha.test');
+
+  await panel.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('#list li.row'));
+    for (const row of rows) row.dataset.probe = 'marked';
+  });
+  await page.evaluate((target) => fetch(target).catch(() => {}), url('fresh.alpha.test', '/asset'));
+  await expect(panel.locator('#list')).toContainText('fresh.alpha.test');
+
+  expect(await panel.evaluate(
+    () => document.querySelectorAll('#list li.row[data-probe="marked"]').length
+  )).toBeGreaterThan(0);
+
+  await page.close();
+  await panel.close();
+});

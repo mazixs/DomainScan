@@ -15,6 +15,10 @@ The extension has four layers:
 3. `src/content/`: MAIN-world instrumentation plus an ISOLATED-world relay.
 4. `src/sidepanel/`: active-tab connection, derived rows, rendering, and copy actions.
 
+The list is reconciled, never rebuilt: a destination keeps its own row element while it stays
+visible, so an expanded IP list, the focused control and the scroll position survive every incoming
+destination. Each part of a row is rewritten only when its own content changed.
+
 `src/background/service-worker.js` only creates the controller with the global `chrome` object.
 
 ## Site and tab lifecycle

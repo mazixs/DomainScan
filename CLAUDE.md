@@ -53,7 +53,8 @@ changing anything shared):
    cross the boundary — never returned values.
 4. **`src/sidepanel/`** — `connection.js` (long-lived port, `HELLO` rebind on tab activation, bounded
    reconnect backoff), `view-model.js` (pure row derivation from `TabState`), `panel.js` (rendering,
-   selection, copy, demo mode).
+   selection, copy, demo mode). `renderList` **reconciles by `row.key`** — never clear and rebuild the
+   list, or an expanded IP list and the user's keyboard focus die on every incoming request.
 
 **Site session model:** each `TabState` is keyed by numeric tab ID; its `siteKey` is the registrable
 domain (full ICANN + PRIVATE PSL) or the normalized IP for a direct-IP top-level page. Identity comes

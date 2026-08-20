@@ -260,15 +260,40 @@ function hint(text) {
   return span;
 }
 
+/**
+ * Reconciles the list against the rows it should show. Destinations keep their own
+ * element for as long as they are visible, so an expanded IP list, the focused
+ * control and the scroll position survive every incoming destination.
+ */
 function renderList() {
   const rows = buildRows();
-  el.list.textContent = '';
 
   if (rows.length === 0) {
+    el.list.textContent = '';
     el.list.appendChild(emptyRow());
     return;
   }
-  rows.forEach((r, i) => el.list.appendChild(rowNode(r, i)));
+
+  const known = new Map();
+  for (const node of Array.from(el.list.children)) {
+    const key = node.dataset && node.dataset.key;
+    if (key) known.set(key, node);
+    else node.remove(); // the empty-state placeholder
+  }
+
+  let cursor = el.list.firstChild;
+  for (const row of rows) {
+    let node = known.get(row.key);
+    if (node) {
+      known.delete(row.key);
+      updateRowNode(node, row);
+    } else {
+      node = rowNode(row);
+    }
+    if (node === cursor) cursor = cursor.nextSibling;
+    else el.list.insertBefore(node, cursor);
+  }
+  for (const node of known.values()) node.remove();
 }
 
 function emptyRow() {
@@ -286,101 +311,138 @@ function emptyRow() {
   return li;
 }
 
-function rowNode(r, i) {
+let rowIdSequence = 0;
+
+function rowNode(row) {
   const li = document.createElement('li');
-  li.className = 'row' + (r.party === 'third' ? ' third' : '');
+  li.className = 'row';
+  li.dataset.key = row.key;
 
-  const cbId = 'cb-' + i;
-  const isIp = r.kind === 'ip';
-
-  // selection checkbox
   const cb = document.createElement('input');
   cb.type = 'checkbox';
   cb.className = 'cb';
-  cb.id = cbId;
-  cb.checked = ui.selected[r.key] != null;
-  cb.dataset.key = r.key;
-  cb.dataset.value = r.display;
-  cb.setAttribute('aria-label', t('selectRow', { host: r.display }));
+  cb.id = 'cb-' + (++rowIdSequence);
   li.appendChild(cb);
 
-  // main column
   const main = document.createElement('div');
   main.className = 'row-main';
 
   const host = document.createElement('label');
-  host.className = 'host' + (isIp ? ' ip' : ui.mode === 'exact' ? ' exact' : '');
-  host.setAttribute('for', cbId);
-  appendHostMarkup(host, r.display, isIp);
+  host.className = 'host';
+  host.setAttribute('for', cb.id);
   main.appendChild(host);
 
   const sub = document.createElement('p');
   sub.className = 'sub';
-
-  const party = document.createElement('span');
-  party.className = 'party party-' + r.party;
-  const mk = document.createElement('span');
-  mk.className = 'mk';
-  mk.setAttribute('aria-hidden', 'true');
-  party.append(mk, t(PARTY_KEY[r.party]));
-  sub.appendChild(party);
-
-  sub.appendChild(sep());
-
-  const rtype = document.createElement('span');
-  rtype.className = 'rtype';
-  rtype.textContent = r.requestTypes.map((type) => t('requestType_' + type)).join(', ');
-  sub.appendChild(rtype);
-
-  if (r.grouped > 1) {
-    sub.appendChild(sep());
-    const g = document.createElement('span');
-    g.className = 'grouped';
-    // count only — no invented string; the shown-count already explains grouping
-    g.textContent = '×' + r.grouped;
-    sub.appendChild(g);
-  }
-
   main.appendChild(sub);
 
-  if (!isIp && r.ips.length > 0) {
-    const details = document.createElement('details');
-    details.className = 'ip-details';
-    const summary = document.createElement('summary');
-    summary.textContent = t('resolvedIps', { count: r.ips.length });
-    const addresses = document.createElement('ul');
-    addresses.className = 'ip-addresses';
-    for (const address of r.ips) {
-      const item = document.createElement('li');
-      item.textContent = address;
-      addresses.appendChild(item);
-    }
-    details.append(summary, addresses);
-    main.appendChild(details);
-  }
   li.appendChild(main);
 
-  // per-row copy
   const copy = document.createElement('button');
   copy.type = 'button';
   copy.className = 'copy-btn';
-  copy.dataset.value = r.display;
-  copy.dataset.kind = r.kind;
-  copy.setAttribute('aria-label', t('copyRow', { host: r.display }));
-
   const txt = document.createElement('span');
   txt.className = 'txt';
   txt.textContent = t('copy');
-
   const done = document.createElement('span');
   done.className = 'done';
   done.setAttribute('aria-hidden', 'true');
   done.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M20 6L9 17l-5-5"/></svg>';
-
   copy.append(txt, done);
   li.appendChild(copy);
 
+  updateRowNode(li, row);
   return li;
+}
+
+// Each part is rewritten only when its own content changed, so repainting a row
+// costs nothing when a destination is merely seen again.
+function updateRowNode(li, row) {
+  const isIp = row.kind === 'ip';
+  li.classList.toggle('third', row.party === 'third');
+
+  const cb = li.querySelector('.cb');
+  cb.checked = ui.selected[row.key] != null;
+  cb.dataset.key = row.key;
+  cb.dataset.value = row.display;
+  cb.setAttribute('aria-label', t('selectRow', { host: row.display }));
+
+  const hostSignature = ui.mode + '|' + row.display;
+  if (li.dataset.host !== hostSignature) {
+    li.dataset.host = hostSignature;
+    const host = li.querySelector('.host');
+    host.className = 'host' + (isIp ? ' ip' : ui.mode === 'exact' ? ' exact' : '');
+    host.textContent = '';
+    appendHostMarkup(host, row.display, isIp);
+  }
+
+  const subSignature = [row.party, row.requestTypes.join(','), row.grouped].join('|');
+  if (li.dataset.sub !== subSignature) {
+    li.dataset.sub = subSignature;
+    const sub = li.querySelector('.sub');
+    sub.textContent = '';
+
+    const party = document.createElement('span');
+    party.className = 'party party-' + row.party;
+    const mk = document.createElement('span');
+    mk.className = 'mk';
+    mk.setAttribute('aria-hidden', 'true');
+    party.append(mk, t(PARTY_KEY[row.party]));
+    sub.appendChild(party);
+
+    sub.appendChild(sep());
+
+    const rtype = document.createElement('span');
+    rtype.className = 'rtype';
+    rtype.textContent = row.requestTypes.map((type) => t('requestType_' + type)).join(', ');
+    sub.appendChild(rtype);
+
+    if (row.grouped > 1) {
+      sub.appendChild(sep());
+      const g = document.createElement('span');
+      g.className = 'grouped';
+      // count only — no invented string; the shown-count already explains grouping
+      g.textContent = '\u00d7' + row.grouped;
+      sub.appendChild(g);
+    }
+  }
+
+  updateRowAddresses(li, isIp ? [] : row.ips);
+
+  const copy = li.querySelector('.copy-btn');
+  copy.dataset.value = row.display;
+  copy.dataset.kind = row.kind;
+  copy.setAttribute('aria-label', t('copyRow', { host: row.display }));
+}
+
+function updateRowAddresses(li, addresses) {
+  const signature = addresses.join(',');
+  if (li.dataset.ips === signature) return;
+  li.dataset.ips = signature;
+
+  let details = li.querySelector('.ip-details');
+  if (addresses.length === 0) {
+    if (details) details.remove();
+    return;
+  }
+  if (!details) {
+    details = document.createElement('details');
+    details.className = 'ip-details';
+    details.appendChild(document.createElement('summary'));
+    const list = document.createElement('ul');
+    list.className = 'ip-addresses';
+    details.appendChild(list);
+    li.querySelector('.row-main').appendChild(details);
+  }
+
+  details.querySelector('summary').textContent = t('resolvedIps', { count: addresses.length });
+  const list = details.querySelector('.ip-addresses');
+  list.textContent = '';
+  for (const address of addresses) {
+    const item = document.createElement('li');
+    item.textContent = address;
+    list.appendChild(item);
+  }
 }
 
 function sep() {
