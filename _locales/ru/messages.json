@@ -13,6 +13,11 @@
 
   "activeTab": { "message": "Активная вкладка" },
   "uniqueDestinations": { "message": "уникальных адресов" },
+  "recordingSince": {
+    "message": "Запись ведется с $time$",
+    "placeholders": { "time": { "content": "$1", "example": "14:32" } }
+  },
+
   "showingDestinations": {
     "message": "Показано адресов: $count$",
     "placeholders": { "count": { "content": "$1", "example": "7" } }

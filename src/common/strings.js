@@ -18,6 +18,7 @@ export const FALLBACK_EN = {
   activeTab: 'Active tab',
   uniqueDestinations: 'unique destinations',
   showingDestinations: 'Showing $COUNT$ destinations',
+  recordingSince: 'Record kept since $TIME$',
 
   fingerprintTitle: 'Possible fingerprinting',
   fingerprintTag: 'Heuristic',

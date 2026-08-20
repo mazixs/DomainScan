@@ -51,7 +51,12 @@ function fakeChrome(initialStorage = {}) {
       onStartup: fakeEvent()
     },
     tabs: {
-      onRemoved: fakeEvent()
+      onRemoved: fakeEvent(),
+      onUpdated: fakeEvent(),
+      openTabs: [],
+      async query() {
+        return structuredClone(this.openTabs);
+      }
     },
     sidePanel: {
       calls: [],
@@ -85,6 +90,17 @@ function request(chrome, tabId, url, type = 'script', requestId = `request-${++r
   return requestId;
 }
 
+// A committed navigation: Chrome first reports the document request, then the tab
+// URL changes once the document is committed.
+function navigate(chrome, tabId, url, documentId) {
+  const requestId = `navigation-${++requestSequence}`;
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId, url, type: 'main_frame', requestId, documentId
+  });
+  chrome.tabs.onUpdated.emit(tabId, { url, status: 'loading' }, { id: tabId, url });
+  return requestId;
+}
+
 test('a panel port can rebind between tabs without receiving stale tab updates', async () => {
   const chrome = fakeChrome();
   const controller = createBackgroundController(chrome);
@@ -96,7 +112,7 @@ test('a panel port can rebind between tabs without receiving stale tab updates',
   await controller.flush();
   assert.equal(lastState(port).tabId, 11);
 
-  request(chrome, 11, 'https://one.alpha.test/', 'main_frame');
+  navigate(chrome, 11, 'https://one.alpha.test/');
   await controller.flush();
   assert.equal(lastState(port).pageHost, 'one.alpha.test');
 
@@ -107,7 +123,7 @@ test('a panel port can rebind between tabs without receiving stale tab updates',
   await controller.flush();
   assert.equal(port.sent.length, sentAfterRebind);
 
-  request(chrome, 12, 'https://one.beta.test/', 'main_frame');
+  navigate(chrome, 12, 'https://one.beta.test/');
   await controller.flush();
   assert.equal(lastState(port).tabId, 12);
   assert.equal(lastState(port).pageHost, 'one.beta.test');
@@ -126,7 +142,7 @@ test('ports bound to the same tab all receive state and disconnect independently
   await controller.flush();
 
   first.disconnect();
-  request(chrome, 3, 'https://example.com/', 'main_frame');
+  navigate(chrome, 3, 'https://example.com/');
   await controller.flush();
 
   assert.equal(lastState(first).pageHost, null);
@@ -141,13 +157,13 @@ test('same-site navigation accumulates while cross-site navigation resets eviden
   chrome.runtime.onConnect.emit(port);
   port.receive({ type: MSG.HELLO, tabId: 5 });
 
-  request(chrome, 5, 'https://one.alpha.test/a', 'main_frame');
+  navigate(chrome, 5, 'https://one.alpha.test/a');
   request(chrome, 5, 'https://cdn.alpha.test/a.js');
-  request(chrome, 5, 'https://two.alpha.test/b', 'main_frame');
+  navigate(chrome, 5, 'https://two.alpha.test/b');
   await controller.flush();
   assert.ok(lastState(port).destinations['host|cdn.alpha.test']);
 
-  request(chrome, 5, 'https://one.beta.test/', 'main_frame');
+  navigate(chrome, 5, 'https://one.beta.test/');
   await controller.flush();
   assert.equal(lastState(port).siteKey, 'beta.test');
   assert.equal(lastState(port).destinations['host|cdn.alpha.test'], undefined);
@@ -160,7 +176,7 @@ test('pause blocks network, IP, and fingerprint capture but still follows cross-
   const port = fakePort();
   chrome.runtime.onConnect.emit(port);
   port.receive({ type: MSG.HELLO, tabId: 8 });
-  request(chrome, 8, 'https://one.alpha.test/', 'main_frame');
+  navigate(chrome, 8, 'https://one.alpha.test/');
   await controller.flush();
 
   port.receive({ type: MSG.SET_PAUSED, paused: true });
@@ -180,7 +196,7 @@ test('pause blocks network, IP, and fingerprint capture but still follows cross-
   assert.equal(lastState(port).destinations['host|cdn.alpha.test'], undefined);
   assert.deepEqual(lastState(port).fingerprint.signals, {});
 
-  request(chrome, 8, 'https://one.beta.test/', 'main_frame');
+  navigate(chrome, 8, 'https://one.beta.test/');
   await controller.flush();
   assert.equal(lastState(port).siteKey, 'beta.test');
   assert.deepEqual(lastState(port).destinations, {});
@@ -216,9 +232,9 @@ test('a late response from the previous site cannot enrich the new site session'
   const chrome = fakeChrome();
   const controller = createBackgroundController(chrome);
   await controller.ready;
-  request(chrome, 2, 'https://one.alpha.test/', 'main_frame');
+  navigate(chrome, 2, 'https://one.alpha.test/');
   const oldRequestId = request(chrome, 2, 'https://cdn.shared.test/old.js');
-  request(chrome, 2, 'https://one.beta.test/', 'main_frame');
+  navigate(chrome, 2, 'https://one.beta.test/');
   const newRequestId = request(chrome, 2, 'https://cdn.shared.test/new.js');
 
   chrome.webRequest.onResponseStarted.emit({
@@ -251,29 +267,17 @@ test('a late signal from the previous document cannot attach to the new site ses
   const controller = createBackgroundController(chrome);
   await controller.ready;
 
-  chrome.webRequest.onBeforeRequest.emit({
-    tabId: 19,
-    url: 'https://one.alpha.test/',
-    type: 'main_frame',
-    requestId: 'navigation-old',
-    documentId: 'document-old'
-  });
-  chrome.webRequest.onBeforeRequest.emit({
-    tabId: 19,
-    url: 'https://one.beta.test/',
-    type: 'main_frame',
-    requestId: 'navigation-new',
-    documentId: 'document-new'
-  });
+  navigate(chrome, 19, 'https://one.alpha.test/', 'document-old');
+  navigate(chrome, 19, 'https://one.beta.test/', 'document-new');
   chrome.runtime.onMessage.emit(
-    { type: MSG.FINGERPRINT, signal: 'timezone', pageHost: 'one.alpha.test' },
+    { type: MSG.FINGERPRINT, signal: 'timezone' },
     { tab: { id: 19, url: 'https://one.beta.test/' }, frameId: 0, documentId: 'document-old' }
   );
   await controller.flush();
   assert.deepEqual(controller.getState(19).fingerprint.signals, {});
 
   chrome.runtime.onMessage.emit(
-    { type: MSG.FINGERPRINT, signal: 'language', pageHost: 'one.beta.test' },
+    { type: MSG.FINGERPRINT, signal: 'language' },
     { tab: { id: 19, url: 'https://one.beta.test/' }, frameId: 0, documentId: 'document-new' }
   );
   await controller.flush();
@@ -287,7 +291,7 @@ test('clear removes all site evidence and tab removal deletes persisted state', 
   const port = fakePort();
   chrome.runtime.onConnect.emit(port);
   port.receive({ type: MSG.HELLO, tabId: 6 });
-  request(chrome, 6, 'https://example.com/', 'main_frame');
+  navigate(chrome, 6, 'https://example.com/');
   chrome.runtime.onMessage.emit(
     { type: MSG.FINGERPRINT, signal: 'timezone' },
     { tab: { id: 6 }, frameId: 0 }
@@ -319,7 +323,7 @@ test('tab removal waits for an in-flight state write before deleting storage', a
 
   const controller = createBackgroundController(chrome);
   await controller.ready;
-  request(chrome, 17, 'https://example.com/', 'main_frame');
+  navigate(chrome, 17, 'https://example.com/');
   await writeStarted;
 
   chrome.tabs.onRemoved.emit(17);
@@ -351,4 +355,130 @@ test('rehydration completes before queued capture and migrates legacy state', as
   assert.equal(state.siteKey, 'example.com');
   assert.ok(state.destinations['host|cdn.example.com']);
   assert.ok(state.fingerprint.signals.canvas_readback);
+});
+
+test('an uncommitted cross-site navigation keeps the current site session', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 31, 'https://shop.alpha.test/');
+  request(chrome, 31, 'https://cdn.alpha.test/a.js');
+  await controller.flush();
+
+  // A download: the document request is made, but the tab never commits it.
+  request(chrome, 31, 'https://files.gamma.test/file.zip', 'main_frame');
+  await controller.flush();
+
+  const state = controller.getState(31);
+  assert.equal(state.siteKey, 'alpha.test');
+  assert.equal(state.pageHost, 'shop.alpha.test');
+  assert.ok(state.destinations['host|cdn.alpha.test']);
+  assert.ok(state.destinations['host|files.gamma.test']);
+});
+
+test('a committed navigation records the document and its resolved IP', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+
+  const requestId = 'navigation-with-ip';
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: 32, url: 'https://one.alpha.test/', type: 'main_frame', requestId
+  });
+  chrome.webRequest.onResponseStarted.emit({
+    tabId: 32, url: 'https://one.alpha.test/', ip: '203.0.113.20', requestId
+  });
+  chrome.tabs.onUpdated.emit(32, { url: 'https://one.alpha.test/' }, { id: 32, url: 'https://one.alpha.test/' });
+  await controller.flush();
+
+  const document = controller.getState(32).destinations['host|one.alpha.test'];
+  assert.equal(controller.getState(32).siteKey, 'alpha.test');
+  assert.ok(document, 'the committed document is recorded as a destination');
+  assert.deepEqual(Object.keys(document.ips), ['203.0.113.20']);
+});
+
+test('a navigation committed without an observed request invents no destination', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+
+  // Back-forward cache restore: the tab URL changes with no network request.
+  chrome.tabs.onUpdated.emit(33, { url: 'https://one.alpha.test/' }, { id: 33, url: 'https://one.alpha.test/' });
+  await controller.flush();
+
+  assert.equal(controller.getState(33).siteKey, 'alpha.test');
+  assert.deepEqual(controller.getState(33).destinations, {});
+});
+
+test('open tabs are seeded from the browser before queued events are captured', async () => {
+  const chrome = fakeChrome();
+  chrome.tabs.openTabs = [
+    { id: 34, url: 'https://one.alpha.test/inbox' },
+    { id: 35, url: 'chrome://settings' }
+  ];
+  const controller = createBackgroundController(chrome);
+  request(chrome, 34, 'https://cdn.alpha.test/a.js');
+  await controller.flush();
+
+  assert.equal(controller.getState(34).siteKey, 'alpha.test');
+  assert.equal(controller.getState(34).pageHost, 'one.alpha.test');
+  assert.ok(controller.getState(34).destinations['host|cdn.alpha.test']);
+  assert.equal(controller.getState(35), undefined);
+});
+
+test('seeding follows a navigation that happened while the worker was gone', async () => {
+  const chrome = fakeChrome({
+    'tab:36': {
+      tabId: 36,
+      siteKey: 'alpha.test',
+      pageUrl: 'https://one.alpha.test',
+      pageHost: 'one.alpha.test',
+      destinations: {
+        'host|cdn.alpha.test': {
+          id: 'host|cdn.alpha.test', kind: 'host', value: 'cdn.alpha.test',
+          party: 'third', requestType: 'script', transport: 'https',
+          ips: {}, firstSeen: 10, lastSeen: 10, count: 1
+        }
+      },
+      fingerprint: { signals: {} },
+      paused: false,
+      updatedAt: 10
+    }
+  });
+  chrome.tabs.openTabs = [{ id: 36, url: 'https://one.beta.test/' }];
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+
+  assert.equal(controller.getState(36).siteKey, 'beta.test');
+  assert.deepEqual(controller.getState(36).destinations, {});
+});
+
+test('a signal from a cross-origin frame binds to the top-level tab URL', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  chrome.tabs.onUpdated.emit(37, { url: 'https://one.alpha.test/' }, { id: 37, url: 'https://one.alpha.test/' });
+  await controller.flush();
+
+  chrome.runtime.onMessage.emit(
+    { type: MSG.FINGERPRINT, signal: 'canvas_readback' },
+    { tab: { id: 37, url: 'https://one.alpha.test/' }, frameId: 7 }
+  );
+  await controller.flush();
+  assert.ok(
+    controller.getState(37).fingerprint.signals.canvas_readback,
+    'a third-party frame of the current page is still evidence for this site'
+  );
+
+  chrome.runtime.onMessage.emit(
+    { type: MSG.FINGERPRINT, signal: 'timezone' },
+    { tab: { id: 37, url: 'https://one.beta.test/' }, frameId: 7 }
+  );
+  chrome.runtime.onMessage.emit(
+    { type: MSG.FINGERPRINT, signal: 'language' },
+    { tab: { id: 37 }, frameId: 7 }
+  );
+  await controller.flush();
+  assert.equal(controller.getState(37).fingerprint.signals.timezone, undefined);
+  assert.equal(controller.getState(37).fingerprint.signals.language, undefined);
 });

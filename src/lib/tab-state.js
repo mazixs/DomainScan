@@ -15,6 +15,7 @@ export function makeTabState(tabId, now = Date.now()) {
     destinations: {},
     fingerprint: { signals: {} },
     paused: false,
+    siteStartedAt: now,
     updatedAt: now
   };
 }
@@ -34,7 +35,11 @@ export function applyTopLevelNavigation(state, url, now = Date.now()) {
   const siteKey = siteKeyForHost(pageHost);
   const previousSiteKey = state.siteKey ||
     (state.pageHost ? siteKeyForHost(state.pageHost) : null);
-  const changedSite = !!previousSiteKey && previousSiteKey !== siteKey;
+  // Evidence collected while the site was unknown cannot be attributed to the site
+  // that just became known, so it is dropped instead of shown under a wrong host.
+  const changedSite = previousSiteKey
+    ? previousSiteKey !== siteKey
+    : hasEvidence(state);
 
   return {
     ...state,
@@ -43,8 +48,14 @@ export function applyTopLevelNavigation(state, url, now = Date.now()) {
     pageHost,
     destinations: changedSite ? {} : state.destinations,
     fingerprint: changedSite ? { signals: {} } : state.fingerprint,
+    siteStartedAt: changedSite ? now : state.siteStartedAt,
     updatedAt: now
   };
+}
+
+function hasEvidence(state) {
+  return Object.keys(state.destinations || {}).length > 0 ||
+    Object.keys((state.fingerprint && state.fingerprint.signals) || {}).length > 0;
 }
 
 export function recordDestination(state, observation, now = Date.now()) {
@@ -275,6 +286,7 @@ export function normalizeTabState(value, now = Date.now()) {
     destinations,
     fingerprint: normalizeFingerprint(source.fingerprint, updatedAt),
     paused: !!source.paused,
+    siteStartedAt: Number.isFinite(source.siteStartedAt) ? source.siteStartedAt : updatedAt,
     updatedAt
   };
 }

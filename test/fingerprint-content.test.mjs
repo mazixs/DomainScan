@@ -343,7 +343,10 @@ function createRelayHarness() {
     addEventListener(type, listener) {
       assert.equal(type, 'domainscan:probe-channel');
       channelListener = listener;
-    }
+    },
+    // A same-origin frame can read the top-level location; the relay must still not
+    // pass page-derived values to the extension.
+    top: { location: { hostname: 'news.example' } }
   };
   const chrome = {
     runtime: {
@@ -484,4 +487,12 @@ test('concealed toString still throws for values that are not functions', () => 
     })()`),
     'TypeError'
   );
+});
+
+test('relay sends nothing but the message type and the signal name', () => {
+  const harness = createRelayHarness();
+
+  harness.dispatch({ signal: 'timezone' });
+
+  assert.deepEqual(Object.keys(harness.sent[0]).sort(), ['signal', 'type']);
 });

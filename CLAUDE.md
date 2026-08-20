@@ -18,7 +18,7 @@ The only npm dependency is `@playwright/test` (dev-only).
 ```bash
 npm ci                      # Node 22 is the supported runtime
 npm run verify              # syntax + validate + psl:check + unit tests — run this before committing
-npm test                    # node --test test/*.test.mjs  (74 tests, 7 files)
+npm test                    # node --test test/*.test.mjs  (85 tests, 7 files)
 node --test test/tab-state.test.mjs                  # single file
 node --test --test-name-pattern 'registrable' test/domain.test.mjs   # single test
 npm run validate            # manifest sanity, referenced files, __MSG_*__ keys, en/ru locale parity
@@ -56,7 +56,10 @@ changing anything shared):
    selection, copy, demo mode).
 
 **Site session model:** each `TabState` is keyed by numeric tab ID; its `siteKey` is the registrable
-domain (full ICANN + PRIVATE PSL) or the normalized IP for a direct-IP top-level page. Paths, ports,
+domain (full ICANN + PRIVATE PSL) or the normalized IP for a direct-IP top-level page. Identity comes
+from the **committed** tab URL (`tabs.onUpdated`) plus `tabs.query({})` seeding at startup — never
+from a `main_frame` request, because a requested navigation may be a download or be cancelled. Both
+work on host permissions alone; do not add the `tabs` permission. Paths, ports,
 and subdomain depth never split a session; a different `siteKey` clears evidence but keeps the tab ID
 and pause preference. State is mirrored to `chrome.storage.session` under `tab:<id>`, so it survives
 service-worker suspension but not tab closure. Tabs never share destination objects.
@@ -66,6 +69,10 @@ site session; `onResponseStarted` may attach its IP only if request ID, tab, hos
 session all still match. This is deliberate — do not "simplify" it, or a late response from the
 previous site lands under the new one. Each hostname retains **all** observed IPs with
 first/last/count.
+
+**Signal attribution:** a `FINGERPRINT` message is bound to a site by document ID when Chrome supplies
+one, otherwise by `sender.tab.url`; anything unattributable is dropped. The relay forwards only the
+signal name — never a value read in the page.
 
 **i18n:** `src/common/strings.js` `t(key, subs)` uses `chrome.i18n` when present and falls back to
 `FALLBACK_EN`. Any new UI string needs an entry in `_locales/en/messages.json`, `_locales/ru/messages.json`,

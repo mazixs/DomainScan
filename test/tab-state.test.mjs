@@ -187,3 +187,53 @@ test('normalizeTabState migrates the MVP storage shape without losing evidence',
   ]);
   assert.equal(state.paused, true);
 });
+
+test('evidence gathered before the site was known is dropped once it is known', () => {
+  let state = makeTabState(1, 1000);
+  state = recordDestination(state, {
+    value: 'tracker.alpha.test',
+    kind: 'host',
+    party: 'third',
+    requestType: 'script',
+    transport: 'https'
+  }, 1000);
+  state = recordFingerprintSignal(state, 'timezone', 0, 1000);
+
+  state = applyTopLevelNavigation(state, 'https://one.beta.test/', 2000);
+
+  assert.equal(state.siteKey, 'beta.test');
+  assert.deepEqual(state.destinations, {});
+  assert.deepEqual(state.fingerprint.signals, {});
+});
+
+test('an empty tab keeps its record start when the first site becomes known', () => {
+  const created = makeTabState(1, 1000);
+  const navigated = applyTopLevelNavigation(created, 'https://one.alpha.test/', 2000);
+
+  assert.equal(created.siteStartedAt, 1000);
+  assert.equal(navigated.siteStartedAt, 1000);
+});
+
+test('the record start moves to the moment a new site session begins', () => {
+  let state = applyTopLevelNavigation(makeTabState(1, 1000), 'https://one.alpha.test/', 2000);
+  state = applyTopLevelNavigation(state, 'https://two.alpha.test/', 3000);
+  assert.equal(state.siteStartedAt, 1000, 'the same site keeps the original start');
+
+  state = applyTopLevelNavigation(state, 'https://one.beta.test/', 4000);
+  assert.equal(state.siteStartedAt, 4000);
+});
+
+test('a persisted record without a start time gets one', () => {
+  const state = normalizeTabState({
+    tabId: 2,
+    siteKey: 'alpha.test',
+    pageUrl: 'https://one.alpha.test',
+    pageHost: 'one.alpha.test',
+    destinations: {},
+    fingerprint: { signals: {} },
+    paused: false,
+    updatedAt: 500
+  }, 9000);
+
+  assert.equal(state.siteStartedAt, 500);
+});

@@ -66,6 +66,7 @@ export function createBackgroundController(
   const persistence = new Map();
   const requestSites = new Map();
   const currentDocuments = new Map();
+  const pendingNavigations = new Map();
 
   function diagnose(operation, error, tabId) {
     try {
@@ -86,7 +87,21 @@ export function createBackgroundController(
         if (state.tabId >= 0) tabs.set(state.tabId, state);
       }
     })
-    .catch((error) => diagnose('storage.session.get', error));
+    .catch((error) => diagnose('storage.session.get', error))
+    // Requests observed before the first navigation of a session have no site to
+    // belong to, so every open tab is seeded from the browser's own committed URL.
+    .then(() => seedOpenTabs())
+    .catch((error) => diagnose('tabs.query', error));
+
+  async function seedOpenTabs() {
+    if (!chromeApi.tabs || typeof chromeApi.tabs.query !== 'function') return;
+    const openTabs = await chromeApi.tabs.query({});
+    for (const tab of openTabs || []) {
+      if (!tab || !Number.isInteger(tab.id) || tab.id < 0) continue;
+      if (typeof tab.url !== 'string') continue;
+      commitNavigation(tab.id, tab.url);
+    }
+  }
 
   let work = ready;
   function enqueue(operation, task) {
@@ -165,12 +180,17 @@ export function createBackgroundController(
     }
     if (isIgnorableRequest(tabId, parsed)) return;
 
-    let state = getOrCreate(tabId);
+    const state = getOrCreate(tabId);
     if (type === 'main_frame') {
-      state = applyTopLevelNavigation(state, url, now());
-      currentDocuments.set(tabId, {
-        siteKey: state.siteKey,
-        ids: new Set(typeof documentId === 'string' ? [documentId] : [])
+      // A requested navigation is not a committed one: downloads, cancelled
+      // navigations and failed loads never become the tab's site. The document
+      // request is still an observed destination of the session it was made from.
+      pendingNavigations.set(tabId, {
+        host: normalizeHostname(parsed.hostname),
+        transport: transportFromUrl(parsed),
+        requestId: typeof requestId === 'string' ? requestId : null,
+        documentId: typeof documentId === 'string' ? documentId : null,
+        ip: null
       });
     } else if (type === 'sub_frame' && typeof documentId === 'string') {
       const documents = currentDocuments.get(tabId);
@@ -185,19 +205,60 @@ export function createBackgroundController(
         host: normalizeHostname(parsed.hostname)
       });
     }
-    if (state.paused) {
-      if (type === 'main_frame') commit(state);
-      return;
-    }
+    if (state.paused) return;
 
-    state = recordDestination(state, {
+    commit(recordDestination(state, {
       value: parsed.hostname,
       kind: isIpLiteral(parsed.hostname) ? 'ip' : 'host',
       party: classifyParty(parsed.hostname, state.pageHost),
       requestType: mapRequestType(type),
       transport: transportFromUrl(parsed)
-    }, now());
+    }, now()));
+  }
+
+  // The tab's own URL is the only trustworthy statement about which site the user
+  // is on: it changes when a navigation commits, and never for a download.
+  function commitNavigation(tabId, url) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_error) {
+      return;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+
+    const pending = pendingNavigations.get(tabId);
+    const previous = tabs.get(tabId);
+    if (!pending && previous && previous.siteKey && previous.pageUrl === parsed.origin) {
+      return; // a repeated update about the page already being tracked
+    }
+    pendingNavigations.delete(tabId);
+
+    let state = applyTopLevelNavigation(getOrCreate(tabId), url, now());
+    const host = normalizeHostname(parsed.hostname);
+    const documentId = pending ? pending.documentId : null;
+
+    // Only an observed request may become a destination; a restored page made none.
+    if (pending && pending.host === host && !state.paused && !state.destinations[destinationId(host)]) {
+      state = recordDestination(state, {
+        value: host,
+        kind: isIpLiteral(host) ? 'ip' : 'host',
+        party: classifyParty(host, state.pageHost),
+        requestType: 'document',
+        transport: pending.transport
+      }, now());
+      if (pending.ip) state = recordResolvedIp(state, host, pending.ip, now());
+    }
+
+    currentDocuments.set(tabId, {
+      siteKey: state.siteKey,
+      ids: new Set(documentId ? [documentId] : [])
+    });
     commit(state);
+  }
+
+  function destinationId(host) {
+    return `${isIpLiteral(host) ? 'ip' : 'host'}|${host}`;
   }
 
   function onResponseStarted(details) {
@@ -212,6 +273,11 @@ export function createBackgroundController(
     if (isIgnorableRequest(tabId, parsed)) return;
     const requestSite = typeof requestId === 'string' ? requestSites.get(requestId) : null;
     if (typeof requestId === 'string') requestSites.delete(requestId);
+    const pending = pendingNavigations.get(tabId);
+    if (pending && pending.requestId && pending.requestId === requestId &&
+        pending.host === normalizeHostname(parsed.hostname)) {
+      pending.ip = ip;
+    }
     if (!requestSite ||
         requestSite.tabId !== tabId ||
         requestSite.host !== normalizeHostname(parsed.hostname)) {
@@ -287,16 +353,11 @@ export function createBackgroundController(
       const documents = currentDocuments.get(tabId);
       if (documents && typeof sender.documentId === 'string' && documents.ids.size > 0) {
         if (documents.siteKey !== state.siteKey || !documents.ids.has(sender.documentId)) return;
-      } else {
-        const observedHost = normalizeHostname(message.pageHost);
-        if (observedHost && siteKeyForHost(observedHost) !== state.siteKey) return;
-        if (!observedHost && sender.frameId === 0 && sender.url) {
-          try {
-            if (siteKeyForHost(new URL(sender.url).hostname) !== state.siteKey) return;
-          } catch (_error) {
-            return;
-          }
-        }
+      } else if (siteKeyOfTopLevelUrl(sender) !== state.siteKey) {
+        // Without a known document the only trustworthy binding is the tab's own
+        // top-level URL: a frame of any origin may report, an unattributable one
+        // may not.
+        return;
       }
       const next = recordFingerprintSignal(
         state,
@@ -308,10 +369,27 @@ export function createBackgroundController(
     });
   });
 
+  function siteKeyOfTopLevelUrl(sender) {
+    const url = sender && sender.tab && sender.tab.url;
+    if (typeof url !== 'string' || !url) return null;
+    try {
+      return siteKeyForHost(normalizeHostname(new URL(url).hostname));
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  chromeApi.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    const url = (changeInfo && changeInfo.url) || (tab && tab.url);
+    if (!Number.isInteger(tabId) || tabId < 0 || typeof url !== 'string') return;
+    enqueue('tabs.onUpdated', () => commitNavigation(tabId, url));
+  });
+
   chromeApi.tabs.onRemoved.addListener((tabId) => {
     enqueue('tabs.onRemoved', async () => {
       tabs.delete(tabId);
       currentDocuments.delete(tabId);
+      pendingNavigations.delete(tabId);
       for (const [requestId, requestSite] of requestSites) {
         if (requestSite.tabId === tabId) requestSites.delete(requestId);
       }

@@ -46,6 +46,7 @@ const el = {
   eyebrow: document.getElementById('eyebrow'),
   siteHost: document.getElementById('site-host'),
   siteCount: document.getElementById('site-count'),
+  recordSince: document.getElementById('record-since'),
   fpNote: document.getElementById('fp-note'),
   fpTitle: document.getElementById('fp-title'),
   fpTag: document.getElementById('fp-tag'),
@@ -144,6 +145,7 @@ function sampleState() {
       }
     },
     paused: false,
+    siteStartedAt: base,
     updatedAt: base
   };
 }
@@ -194,6 +196,24 @@ function renderHeader() {
   const strong = document.createElement('b');
   strong.textContent = String(total);
   el.siteCount.append(strong, ' ' + t('uniqueDestinations'));
+
+  // Requests made before this moment are not part of the record, so the panel says
+  // where the record starts instead of implying it covers the whole page life.
+  const startedAt = state && state.siteStartedAt;
+  el.recordSince.textContent = Number.isFinite(startedAt)
+    ? t('recordingSince', { time: formatTime(startedAt) })
+    : '';
+}
+
+function formatTime(timestamp) {
+  try {
+    return new Date(timestamp).toLocaleTimeString(document.documentElement.lang || undefined, {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch (_error) {
+    return new Date(timestamp).toTimeString().slice(0, 5);
+  }
 }
 
 function renderFingerprint() {

@@ -9,6 +9,10 @@ copying without turning ordinary requests into a threat score.
 - Every browser tab has an independent history.
 - Paths and subdomains of one registrable domain share that history.
 - Navigating the same tab to another registrable domain starts a fresh history.
+- The site of a tab comes from its committed URL, so downloads and cancelled navigations never
+  replace it, while the request they made stays visible in the current record.
+- Open tabs are seeded when the extension starts, and the panel states since when the record for the
+  current site is kept.
 - Switching tabs immediately rebinds the side panel to the selected tab.
 - State survives Manifest V3 service-worker suspension through `chrome.storage.session`.
 - Every observed resolved IP is retained per hostname; direct-IP requests remain visible.
@@ -75,8 +79,9 @@ and remaining platform limitations are in `output/technical-audit.md`.
 - `<all_urls>` host access: required to observe arbitrary request destinations and instrument the
   selected local APIs on pages and frames.
 
-The extension deliberately does not request the `tabs` permission: the tab identifier and tab
-activation/removal events used here are available without reading sensitive tab properties.
+The extension deliberately does not request the `tabs` permission: tab identifiers, activation and
+removal events, and the committed tab URLs used to decide the current site are all available through
+the host permissions already granted.
 
 ## Platform limits
 

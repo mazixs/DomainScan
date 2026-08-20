@@ -82,6 +82,12 @@ test.beforeAll(async () => {
         </script>`);
       return;
     }
+    if (request.url === '/download') {
+      response.setHeader('Content-Type', 'application/octet-stream');
+      response.setHeader('Content-Disposition', 'attachment; filename="file.bin"');
+      response.end('payload');
+      return;
+    }
     if (request.url === '/forgery') {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       response.end(`<!doctype html>
@@ -271,4 +277,33 @@ test('keeps page instrumentation invisible to native-source and stack checks', a
   expect(report.constructable).toEqual([]);
   expect(report.stack).not.toContain('chrome-extension://');
   await page.close();
+});
+
+test('a download from another site never becomes the site of the tab', async () => {
+  const page = await context.newPage();
+  await page.goto(url('shop.alpha.test'));
+  const panel = await openPanelFor(page);
+  await expect(panel.locator('#site-host')).toHaveText('shop.alpha.test');
+
+  const download = page.waitForEvent('download').catch(() => null);
+  await page.evaluate((target) => { window.location.href = target; },
+    url('files.gamma.test', '/download'));
+  await download;
+
+  await expect(panel.locator('#site-host')).toHaveText('shop.alpha.test');
+  const hosts = await panel.locator('#list .host').allInnerTexts();
+  expect(hosts).toContain('cdn.alpha.test');
+  expect(hosts).toContain('files.gamma.test');
+  await page.close();
+  await panel.close();
+});
+
+test('the panel states since when the record for this site is kept', async () => {
+  const page = await context.newPage();
+  await page.goto(url('one.alpha.test'));
+  const panel = await openPanelFor(page);
+
+  await expect(panel.locator('#record-since')).toHaveText(/\d{1,2}[:.]\d{2}/);
+  await page.close();
+  await panel.close();
 });

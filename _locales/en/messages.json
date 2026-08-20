@@ -13,6 +13,11 @@
 
   "activeTab": { "message": "Active tab" },
   "uniqueDestinations": { "message": "unique destinations" },
+  "recordingSince": {
+    "message": "Record kept since $time$",
+    "placeholders": { "time": { "content": "$1", "example": "14:32" } }
+  },
+
   "showingDestinations": {
     "message": "Showing $count$ destinations",
     "placeholders": { "count": { "content": "$1", "example": "7" } }

@@ -24,12 +24,29 @@ Each `TabState` belongs to one numeric Chrome tab ID. Its `siteKey` is:
 - the normalized IP for a direct-IP top-level page;
 - otherwise the registrable domain calculated with the bundled full ICANN and PRIVATE PSL.
 
-A main-frame navigation follows these rules:
+The site of a tab is taken from the tab's own committed URL (`tabs.onUpdated`), never from a
+requested navigation. A document request only registers a pending navigation; a download, a
+cancelled navigation or a failed load never becomes the site, while the document request itself
+stays an observed destination of the session it was made from. When a navigation commits, the
+document is recorded once, together with the IP buffered from its response.
+
+Both `tabs.onUpdated` and the `tabs.query` seeding below use URLs granted by host permissions; the
+`tabs` permission is still not requested.
+
+A committed navigation follows these rules:
 
 - first page: initialize the site session;
 - same `siteKey`: update the visible page origin/host and retain all evidence;
 - different `siteKey`: clear destinations and environment signals, retain the tab ID and pause
-  preference.
+  preference;
+- previous site unknown: evidence gathered before the site was known cannot be attributed to it, so
+  it is dropped rather than shown under the wrong host.
+
+On startup the controller rehydrates session storage and then seeds every open tab from
+`tabs.query({})`, because requests observed before the first navigation of a browser session would
+otherwise have no site to belong to. `siteStartedAt` records when the current site session began and
+the panel states it ("Record kept since HH:MM"), so a record that starts mid-page never reads as a
+complete one.
 
 Paths, ports, and arbitrary subdomain depth do not split a site session. Closing a tab removes its
 session-storage record. Tabs never share destination objects.
@@ -80,6 +97,7 @@ bounded backoff (250 ms up to 4 s) and binds the current active tab again.
     }
   },
   paused: false,
+  siteStartedAt: 1720000000000,
   updatedAt: 1720000001000
 }
 ```
@@ -92,7 +110,7 @@ migrated by `normalizeTabState`.
 
 ## Network observations
 
-`onBeforeRequest` records the destination and request category. A request ID is correlated with
+`onBeforeRequest` records the destination and request category, and never changes the site. A request ID is correlated with
 the active site session. `onResponseStarted` may add its normalized IP only if the request ID,
 tab, hostname, and site session still match. This prevents a late response from the previous site
 being attached to a new site session.
@@ -134,8 +152,11 @@ guards all three properties.
 
 The ISOLATED relay registers first and accepts one synchronous `MessageChannel` from the MAIN probe
 at `document_start`; later replacement channels and ordinary page `postMessage` calls are ignored.
-It accepts each signal at most once per frame document, and the controller binds messages to the
-current document/site when Chrome supplies document IDs. A page can still deliberately call an
+It accepts each signal at most once per frame document and forwards nothing but the message type and
+the canonical signal name. The controller binds a message to a site by document ID when Chrome
+supplies one, and otherwise by the tab's own top-level URL — so a frame of any origin on the current
+page counts as evidence, while a message that cannot be attributed is dropped. No value read inside
+the page decides attribution. A page can still deliberately call an
 instrumented API without using its result, so these signals remain heuristic evidence rather than
 proof of intent.
 
