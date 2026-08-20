@@ -30,10 +30,72 @@
     }
   }
 
+  // A wrapper that reveals itself is worse than no observation at all: bot
+  // protections read native sources and treat a patched built-in as a tampered
+  // browser, which turns a solvable check into a hard block. Every wrapper
+  // therefore reports the source of the function it replaced, and the mechanism
+  // that does so reports itself as untouched.
+  var replacedSources = typeof WeakMap === 'function' ? new WeakMap() : null;
+  var nativeToString = Function.prototype.toString;
+
+  function conceal(wrapper, original) {
+    if (!replacedSources) return;
+    try {
+      replacedSources.set(wrapper, original);
+    } catch (error) {}
+  }
+
+  function concealedSourceTarget(receiver) {
+    if (!replacedSources) return receiver;
+    try {
+      var original = replacedSources.get(receiver);
+      return original || receiver;
+    } catch (error) {
+      return receiver;
+    }
+  }
+
+  // Frames of this content script must not appear in errors a page can read:
+  // they expose the extension ID and mark the browser as instrumented.
+  var selfSource = (function () {
+    try {
+      var frames = new Error().stack || '';
+      var match = frames.match(/(chrome-extension:\/\/[^\s):]+)/);
+      return match ? match[1] : 'fingerprint-probe.js';
+    } catch (error) {
+      return 'fingerprint-probe.js';
+    }
+  })();
+
+  function withoutProbeFrames(error) {
+    try {
+      if (!error || typeof error.stack !== 'string') return error;
+      if (error.stack.indexOf(selfSource) === -1) return error;
+      error.stack = error.stack
+        .split('\n')
+        .filter(function (line) {
+          return line.indexOf(selfSource) === -1;
+        })
+        .join('\n');
+    } catch (ignored) {
+      // A read-only stack stays as it is; the original error is still rethrown.
+    }
+    return error;
+  }
+
   function namedWrapper(name, length, invoke) {
-    var wrapper = function () {
-      return invoke(this, arguments);
+    // A concise method has no own "prototype" property and cannot be
+    // constructed, which is exactly how a native built-in behaves.
+    var holder = {
+      wrapper() {
+        try {
+          return invoke(this, arguments);
+        } catch (error) {
+          throw withoutProbeFrames(error);
+        }
+      }
     };
+    var wrapper = holder.wrapper;
     try {
       Object.defineProperty(wrapper, 'name', {
         value: name,
@@ -56,6 +118,7 @@
       if (!descriptor || typeof descriptor.value !== 'function') return;
       var original = descriptor.value;
       var patched = namedWrapper(name, original.length, createInvoke(original));
+      conceal(patched, original);
       Object.defineProperty(proto, name, {
         configurable: descriptor.configurable,
         enumerable: descriptor.enumerable,
@@ -92,6 +155,7 @@
         } catch (error) {}
         return result;
       });
+      conceal(patchedGet, originalGet);
       Object.defineProperty(proto, name, {
         configurable: descriptor.configurable,
         enumerable: descriptor.enumerable,
@@ -102,6 +166,29 @@
       // Non-configurable or unusual host objects remain untouched.
     }
   }
+
+  // Installed before the first wrapper so no page script can capture the
+  // original Function.prototype.toString in between.
+  (function installSourceConcealment() {
+    try {
+      if (!replacedSources) return;
+      var descriptor = Object.getOwnPropertyDescriptor(Function.prototype, 'toString');
+      if (!descriptor || typeof descriptor.value !== 'function') return;
+      var original = descriptor.value;
+      var patched = namedWrapper('toString', original.length, function (receiver) {
+        return nativeToString.call(concealedSourceTarget(receiver));
+      });
+      conceal(patched, original);
+      Object.defineProperty(Function.prototype, 'toString', {
+        configurable: descriptor.configurable,
+        enumerable: descriptor.enumerable,
+        writable: descriptor.writable,
+        value: patched
+      });
+    } catch (error) {
+      // Leaving toString untouched is safer than a half-installed wrapper.
+    }
+  })();
 
   // Canvas pixel readback. Drawing alone is intentionally not observed.
   try {

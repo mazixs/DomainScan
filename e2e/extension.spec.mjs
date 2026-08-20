@@ -225,3 +225,50 @@ test('rejects a page-forged signal and replacement channel', async () => {
   await expect(panel.locator('#fp-note')).toBeHidden();
   await expect(panel.locator('#signal-list > li')).toHaveCount(0);
 });
+
+test('keeps page instrumentation invisible to native-source and stack checks', async () => {
+  const page = await context.newPage();
+  await page.goto(url('cloak.alpha.test'));
+
+  const report = await page.evaluate(() => {
+    const targets = {
+      getImageData: CanvasRenderingContext2D.prototype.getImageData,
+      toDataURL: HTMLCanvasElement.prototype.toDataURL,
+      toBlob: HTMLCanvasElement.prototype.toBlob,
+      webglGetParameter: WebGLRenderingContext.prototype.getParameter,
+      webgl2GetParameter: WebGL2RenderingContext.prototype.getParameter,
+      floatFrequencyData: AnalyserNode.prototype.getFloatFrequencyData,
+      byteFrequencyData: AnalyserNode.prototype.getByteFrequencyData,
+      resolvedOptions: Intl.DateTimeFormat.prototype.resolvedOptions,
+      getTimezoneOffset: Date.prototype.getTimezoneOffset,
+      getCurrentPosition: Geolocation.prototype.getCurrentPosition,
+      watchPosition: Geolocation.prototype.watchPosition,
+      languageGetter: Object.getOwnPropertyDescriptor(Navigator.prototype, 'language').get,
+      languagesGetter: Object.getOwnPropertyDescriptor(Navigator.prototype, 'languages').get,
+      functionToString: Function.prototype.toString
+    };
+    const entries = Object.entries(targets);
+
+    let stack = '';
+    try {
+      document.createElement('canvas').getContext('2d').getImageData(0, 0, 0, 0);
+    } catch (error) {
+      stack = String(error.stack || '');
+    }
+
+    return {
+      patchedSource: entries
+        .filter(([, fn]) => !Function.prototype.toString.call(fn).includes('[native code]'))
+        .map(([key]) => key),
+      constructable: entries
+        .filter(([, fn]) => Object.getOwnPropertyNames(fn).includes('prototype'))
+        .map(([key]) => key),
+      stack
+    };
+  });
+
+  expect(report.patchedSource).toEqual([]);
+  expect(report.constructable).toEqual([]);
+  expect(report.stack).not.toContain('chrome-extension://');
+  await page.close();
+});

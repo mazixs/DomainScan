@@ -88,3 +88,6 @@ activation/removal events used here are available without reading sensitive tab 
   extension does not know whether a permission prompt was approved or whether a returned value was
   useful to the page.
 - `chrome.storage.session` is browser-session storage. Closing a tab removes its DomainScan state.
+- Page instrumentation reports native sources, keeps native function shape, and strips its own
+  frames from errors, so ordinary tampering checks do not see it. No in-page instrumentation can be
+  proven invisible to every check, so a site behind aggressive bot protection can still react to it.

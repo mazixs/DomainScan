@@ -123,6 +123,15 @@ Ordinary JavaScript downloads, Canvas drawing, and WebGL rendering do not create
 No returned value, coordinates, language, timezone, renderer string, audio data, or UA hint is
 sent to the extension.
 
+Instrumentation stays indistinguishable from the untouched browser. Each wrapper is a concise
+method, so it has no own `prototype` and cannot be constructed, exactly like a native built-in.
+`Function.prototype.toString` is replaced once, before the first wrapper, and reports the source of
+the function a wrapper replaced; the replacement reports itself as native. Errors thrown by an
+instrumented API are rethrown with content-script frames removed, so a page never sees the
+extension ID in a stack. This is not cosmetic: a visible wrapper makes bot protections escalate a
+solvable check into a hard block, and it exposes the extension ID to any page. `e2e/extension.spec.mjs`
+guards all three properties.
+
 The ISOLATED relay registers first and accepts one synchronous `MessageChannel` from the MAIN probe
 at `document_start`; later replacement channels and ordinary page `postMessage` calls are ignored.
 It accepts each signal at most once per frame document, and the controller binds messages to the

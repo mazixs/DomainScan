@@ -32,7 +32,7 @@ function method(returnValue) {
   };
 }
 
-function createProbeHarness() {
+function createProbeHarness({ install = true } = {}) {
   function CanvasRenderingContext2D() {}
   function HTMLCanvasElement() {}
   function WebGLRenderingContext() {}
@@ -145,9 +145,14 @@ function createProbeHarness() {
     XMLHttpRequest
   });
 
-  vm.runInContext(probeSource, context, { filename: 'fingerprint-probe.js' });
+  if (install) {
+    vm.runInContext(probeSource, context, { filename: 'fingerprint-probe.js' });
+  }
 
   return {
+    // Evaluates page-side code inside the probe's own realm, so it sees the same
+    // Function.prototype a real page script would see.
+    evaluate: (code) => vm.runInContext(code, context),
     constructors: {
       CanvasRenderingContext2D,
       HTMLCanvasElement,
@@ -416,4 +421,67 @@ test('relay rejects a replacement channel and unknown signal vocabulary', () => 
   harness.dispatch(null);
 
   assert.deepEqual(harness.sent, []);
+});
+
+const INSTRUMENTED_SOURCES = [
+  'CanvasRenderingContext2D.prototype.getImageData',
+  'HTMLCanvasElement.prototype.toDataURL',
+  'HTMLCanvasElement.prototype.toBlob',
+  'WebGLRenderingContext.prototype.getParameter',
+  'WebGL2RenderingContext.prototype.getParameter',
+  'AnalyserNode.prototype.getFloatFrequencyData',
+  'AnalyserNode.prototype.getByteFrequencyData',
+  'Intl.DateTimeFormat.prototype.resolvedOptions',
+  'Date.prototype.getTimezoneOffset',
+  'Geolocation.prototype.getCurrentPosition',
+  'Geolocation.prototype.watchPosition',
+  'NavigatorUAData.prototype.getHighEntropyValues',
+  "Object.getOwnPropertyDescriptor(Navigator.prototype, 'language').get",
+  "Object.getOwnPropertyDescriptor(Navigator.prototype, 'languages').get"
+];
+
+test('instrumented APIs report the source of the function they replaced', () => {
+  const pristine = createProbeHarness({ install: false });
+  const probed = createProbeHarness();
+
+  for (const expression of INSTRUMENTED_SOURCES) {
+    const code = `Function.prototype.toString.call(${expression})`;
+    assert.equal(probed.evaluate(code), pristine.evaluate(code), expression);
+  }
+});
+
+test('the source concealment itself reports as an untouched function', () => {
+  const pristine = createProbeHarness({ install: false });
+  const probed = createProbeHarness();
+
+  const selfCode = 'Function.prototype.toString.call(Function.prototype.toString)';
+  assert.equal(probed.evaluate(selfCode), pristine.evaluate(selfCode));
+
+  const descriptorCode = `(() => {
+    const d = Object.getOwnPropertyDescriptor(Function.prototype, 'toString');
+    return JSON.stringify({
+      configurable: d.configurable,
+      enumerable: d.enumerable,
+      writable: d.writable,
+      name: d.value.name,
+      length: d.value.length
+    });
+  })()`;
+  assert.equal(probed.evaluate(descriptorCode), pristine.evaluate(descriptorCode));
+});
+
+test('concealed toString still throws for values that are not functions', () => {
+  const probed = createProbeHarness();
+
+  assert.equal(
+    probed.evaluate(`(() => {
+      try {
+        Function.prototype.toString.call({});
+        return 'no throw';
+      } catch (error) {
+        return error.constructor.name;
+      }
+    })()`),
+    'TypeError'
+  );
 });
