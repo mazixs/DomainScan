@@ -196,9 +196,9 @@ failure is logged without blocking the live subscriber update.
 Accumulation is delivered in coalesced batches: a captured destination, IP or signal marks its tab
 for delivery and the whole state is written and posted once per 100 ms window, while a committed
 navigation and every panel command (pause, clear) are delivered at once. A closed tab is removed
-from the pending set, so a coalesced update can never resurrect it. The cost of the window is that
-up to 100 ms of accumulation is not yet persisted if the worker is terminated in between; the same
-evidence is still in the live panel.
+from the pending set, so a coalesced update can never resurrect it. The cost of the window is that up to
+100 ms of accumulation is lost if the worker is killed in between — the panel holds the last state
+delivered to it, which is behind by the same window, and the worker's own map dies with it.
 
 Diagnostics include an operation name, tab ID, and error message only. They do not include full
 URLs, page values, or copied data.

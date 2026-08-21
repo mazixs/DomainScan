@@ -83,6 +83,15 @@ function fakeChrome(initialStorage = {}) {
   };
 }
 
+// Waits for the controller's own delivery instead of forcing it with flush().
+async function waitFor(condition, description, timeout = 2000) {
+  const started = Date.now();
+  while (!condition()) {
+    if (Date.now() - started > timeout) throw new Error(`timed out waiting for ${description}`);
+    await new Promise((resolve) => { setTimeout(resolve, 10); });
+  }
+}
+
 function lastState(port) {
   return port.sent.filter((message) => message.type === MSG.STATE).at(-1)?.state;
 }
@@ -713,4 +722,26 @@ test('seeding forgets a stored site when the tab is no longer on the web', async
 
   assert.equal(controller.getState(57).siteKey, null);
   assert.deepEqual(controller.getState(57).destinations, {});
+});
+
+test('accumulated evidence reaches the panel and storage without a forced flush', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 61 });
+  navigate(chrome, 61, 'https://one.alpha.test/');
+  await controller.flush();
+
+  request(chrome, 61, 'https://cdn.alpha.test/a.js');
+  await waitFor(
+    () => {
+      const stored = chrome.storageData['tab:61'];
+      const state = lastState(port);
+      return !!(stored && stored.destinations['host|cdn.alpha.test']) &&
+        !!(state && state.destinations['host|cdn.alpha.test']);
+    },
+    'the controller to deliver a captured destination on its own'
+  );
 });

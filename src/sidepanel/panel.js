@@ -90,9 +90,9 @@ function applyStaticStrings() {
   const language = !IS_DEMO && chrome.i18n && chrome.i18n.getUILanguage
     ? chrome.i18n.getUILanguage()
     : navigator.language;
-  if (language) {
-    document.documentElement.lang = language.toLowerCase().startsWith('ru') ? 'ru' : 'en';
-  }
+  // The exact tag matters: collapsing every non-Russian locale to "en" would print
+  // American 12-hour timestamps to a Dutch or British reader.
+  if (language) document.documentElement.lang = language;
   el.brandName.textContent = t('appName');
   el.settingsLabel.textContent = t('settings');
   el.settingsBtn.setAttribute('title', t('settings'));
