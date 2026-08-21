@@ -85,3 +85,27 @@ test('domain copy excludes direct IP rows and respects the search-filtered rows'
   assert.deepEqual(collectVisibleDomains(rows), ['img.news.example.co.uk']);
   assert.deepEqual(collectVisibleIps(rows), ['203.0.113.10', '203.0.113.11']);
 });
+
+test('a row carries the transports of the destination it stands for', () => {
+  const state = {
+    pageHost: 'news.example',
+    destinations: {
+      'host|a.news.example': {
+        id: 'host|a.news.example', kind: 'host', value: 'a.news.example',
+        party: 'first', requestType: 'script', transports: ['https'],
+        ips: {}, firstSeen: 1, lastSeen: 1, count: 1
+      },
+      'host|b.news.example': {
+        id: 'host|b.news.example', kind: 'host', value: 'b.news.example',
+        party: 'first', requestType: 'image', transports: ['http', 'https'],
+        ips: {}, firstSeen: 2, lastSeen: 2, count: 1
+      }
+    }
+  };
+
+  const exact = buildDestinationRows(state, { mode: 'exact' });
+  assert.deepEqual(exact.map((row) => row.transports), [['https'], ['http', 'https']]);
+
+  const grouped = buildDestinationRows(state, { mode: 'registrable' });
+  assert.deepEqual(grouped.map((row) => row.transports), [['https', 'http']]);
+});

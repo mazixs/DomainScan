@@ -119,7 +119,7 @@ function sampleState() {
     ['host', 'img.news.example', 'first', 'image', 'https'],
     ['host', 'static.edge.test', 'third', 'script', 'https'],
     ['host', 'analytics.vendor.test', 'third', 'fetch', 'https'],
-    ['host', 'pixel.metrics.test', 'third', 'beacon', 'https'],
+    ['host', 'pixel.metrics.test', 'third', 'beacon', 'http'],
     ['host', 'stream.media.test', 'third', 'websocket', 'wss'],
     ['ip', '203.0.113.42', 'ip', 'other', 'https']
   ];
@@ -127,7 +127,7 @@ function sampleState() {
   defs.forEach(([kind, value, party, requestType, transport], i) => {
     const id = kind + '|' + value;
     destinations[id] = {
-      id, kind, value, party, requestType, transport,
+      id, kind, value, party, requestType, transports: [transport],
       ips: kind === 'host' && value === 'news.example'
         ? { '203.0.113.10': { value: '203.0.113.10', firstSeen: base, lastSeen: base, count: 1 } }
         : {},
@@ -379,7 +379,12 @@ function updateRowNode(li, row) {
     appendHostMarkup(host, row.display, isIp);
   }
 
-  const subSignature = [row.party, row.requestTypes.join(','), row.grouped].join('|');
+  const subSignature = [
+    row.party,
+    row.requestTypes.join(','),
+    row.transports.join(','),
+    row.grouped
+  ].join('|');
   if (li.dataset.sub !== subSignature) {
     li.dataset.sub = subSignature;
     const sub = li.querySelector('.sub');
@@ -399,6 +404,18 @@ function updateRowNode(li, row) {
     rtype.className = 'rtype';
     rtype.textContent = row.requestTypes.map((type) => t('requestType_' + type)).join(', ');
     sub.appendChild(rtype);
+
+    // Plain http or ws is a fact about the request, stated as the scheme itself
+    // rather than as a warning: the explanation lives in the title.
+    const insecure = row.transports.filter((transport) => transport === 'http' || transport === 'ws');
+    if (insecure.length > 0) {
+      sub.appendChild(sep());
+      const mark = document.createElement('span');
+      mark.className = 'insecure';
+      mark.textContent = insecure.join(', ');
+      mark.setAttribute('title', t('unencrypted'));
+      sub.appendChild(mark);
+    }
 
     if (row.grouped > 1) {
       sub.appendChild(sep());

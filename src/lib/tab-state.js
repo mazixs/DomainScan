@@ -78,6 +78,7 @@ export function recordDestination(state, observation, now = Date.now()) {
   const destination = existing
     ? {
         ...existing,
+        transports: withTransport(existing.transports, observation.transport),
         lastSeen: now,
         count: existing.count + 1
       }
@@ -87,7 +88,7 @@ export function recordDestination(state, observation, now = Date.now()) {
         value,
         party: observation.party,
         requestType: observation.requestType,
-        transport: observation.transport,
+        transports: withTransport([], observation.transport),
         ips: {},
         firstSeen: now,
         lastSeen: now,
@@ -102,6 +103,19 @@ export function recordDestination(state, observation, now = Date.now()) {
     },
     updatedAt: now
   };
+}
+
+const TRANSPORTS = new Set(['https', 'http', 'wss', 'ws', 'other']);
+
+/**
+ * One destination can be contacted over more than one transport, and which ones
+ * were observed is a fact of its own: a host reached over plain http once stays
+ * a host reached over plain http, whatever it is reached over later.
+ */
+function withTransport(transports, transport) {
+  const known = Array.isArray(transports) ? transports.filter((value) => TRANSPORTS.has(value)) : [];
+  const value = TRANSPORTS.has(transport) ? transport : 'other';
+  return known.includes(value) ? known : [...known, value];
 }
 
 export function recordResolvedIp(state, host, ip, now = Date.now()) {
@@ -256,6 +270,17 @@ function normalizeFingerprint(value, fallbackTime) {
   return { signals };
 }
 
+function normalizeTransports(candidate) {
+  const stored = Array.isArray(candidate.transports)
+    ? candidate.transports
+    : [candidate.transport];
+  const transports = [];
+  for (const value of stored) {
+    if (TRANSPORTS.has(value) && !transports.includes(value)) transports.push(value);
+  }
+  return transports.length > 0 ? transports : ['other'];
+}
+
 /** Coerce persisted or legacy data into the current TabState schema. */
 export function normalizeTabState(value, now = Date.now()) {
   const source = value && typeof value === 'object' ? value : {};
@@ -279,7 +304,7 @@ export function normalizeTabState(value, now = Date.now()) {
       value,
       party: kind === 'ip' ? 'ip' : candidate.party || 'third',
       requestType: candidate.requestType || 'other',
-      transport: candidate.transport || 'other',
+      transports: normalizeTransports(candidate),
       ips: kind === 'host' ? normalizeIpHistory(candidate) : {},
       firstSeen: Number.isFinite(candidate.firstSeen) ? candidate.firstSeen : updatedAt,
       lastSeen: Number.isFinite(candidate.lastSeen) ? candidate.lastSeen : updatedAt,

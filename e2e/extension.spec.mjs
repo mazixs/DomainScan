@@ -353,3 +353,15 @@ test('reuses the row element of a destination instead of rebuilding the list', a
   await page.close();
   await panel.close();
 });
+
+test('a destination contacted without encryption says so in its row', async () => {
+  const page = await context.newPage();
+  await page.goto(url('plain.alpha.test'));
+  const panel = await openPanelFor(page);
+  const row = panel.locator('#list li.row').filter({ hasText: 'cdn.alpha.test' });
+
+  await expect(row.locator('.insecure')).toHaveText('http');
+  await expect(row.locator('.insecure')).toHaveAttribute('title', /encryption|шифров/);
+  await page.close();
+  await panel.close();
+});

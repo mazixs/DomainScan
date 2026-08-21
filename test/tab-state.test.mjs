@@ -237,3 +237,63 @@ test('a persisted record without a start time gets one', () => {
 
   assert.equal(state.siteStartedAt, 500);
 });
+
+test('a destination keeps every transport it was contacted over', () => {
+  let state = makeTabState(1, 1000);
+  state = recordDestination(state, {
+    value: 'cdn.example.com',
+    party: 'third',
+    requestType: 'script',
+    transport: 'https'
+  }, 1000);
+  state = recordDestination(state, {
+    value: 'cdn.example.com',
+    party: 'third',
+    requestType: 'image',
+    transport: 'http'
+  }, 2000);
+
+  const destination = state.destinations['host|cdn.example.com'];
+  assert.deepEqual(destination.transports, ['https', 'http']);
+  assert.equal(destination.count, 2);
+});
+
+test('a transport already observed is not recorded twice', () => {
+  let state = makeTabState(1, 1000);
+  for (const at of [1000, 2000, 3000]) {
+    state = recordDestination(state, {
+      value: 'cdn.example.com',
+      party: 'third',
+      requestType: 'script',
+      transport: 'wss'
+    }, at);
+  }
+
+  assert.deepEqual(state.destinations['host|cdn.example.com'].transports, ['wss']);
+});
+
+test('a persisted destination keeps the transport it was stored with', () => {
+  const state = normalizeTabState({
+    tabId: 3,
+    pageHost: 'news.example',
+    destinations: {
+      'host|cdn.example.com': {
+        id: 'host|cdn.example.com',
+        kind: 'host',
+        value: 'cdn.example.com',
+        party: 'third',
+        requestType: 'script',
+        transport: 'http',
+        ips: {},
+        firstSeen: 10,
+        lastSeen: 10,
+        count: 1
+      }
+    },
+    fingerprint: { signals: {} },
+    paused: false,
+    updatedAt: 10
+  }, 9000);
+
+  assert.deepEqual(state.destinations['host|cdn.example.com'].transports, ['http']);
+});

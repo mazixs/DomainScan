@@ -19,6 +19,7 @@ export const FALLBACK_EN = {
   uniqueDestinations: 'unique destinations',
   showingDestinations: 'Showing $COUNT$ destinations',
   recordingSince: 'Record kept since $TIME$',
+  unencrypted: 'Contacted without encryption',
 
   fingerprintTitle: 'Possible fingerprinting',
   fingerprintTag: 'Heuristic',

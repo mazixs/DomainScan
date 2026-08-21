@@ -79,7 +79,7 @@ bounded backoff (250 ms up to 4 s) and binds the current active tab again.
       value: "cdn.example.co.uk",
       party: "first",
       requestType: "script",
-      transport: "https",
+      transports: ["https"],
       ips: {
         "203.0.113.10": {
           value: "203.0.113.10",
@@ -123,7 +123,9 @@ the active site session. `onResponseStarted` may add its normalized IP only if t
 tab, hostname, and site session still match. This prevents a late response from the previous site
 being attached to a new site session.
 
-One hostname retains all unique IPs with first/last timestamps and counts. The panel exposes those
+One hostname retains all unique IPs with first/last timestamps and counts, and every transport it
+was reached over. A destination contacted over plain `http` or `ws` shows that scheme in its row, as
+a fact with its explanation in the title — never as a warning or a score. The panel exposes those
 addresses under the host row. “Copy IP addresses” combines visible resolved and direct IP values
 and removes duplicates.
 

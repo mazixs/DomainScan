@@ -39,6 +39,7 @@ export function buildDestinationRows(state, { mode = 'exact', query = '' } = {})
       existing.grouped += 1;
       existing.ips = unique([...existing.ips, ...ips]);
       existing.requestTypes = unique([...existing.requestTypes, destination.requestType]);
+      existing.transports = unique([...existing.transports, ...(destination.transports || [])]);
       if (destination.party === 'third') existing.party = 'third';
       continue;
     }
@@ -50,6 +51,7 @@ export function buildDestinationRows(state, { mode = 'exact', query = '' } = {})
       party: destination.party,
       requestType: destination.requestType,
       requestTypes: [destination.requestType],
+      transports: unique(destination.transports || []),
       grouped: 1,
       ips
     };

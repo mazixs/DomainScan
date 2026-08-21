@@ -18,6 +18,8 @@
     "placeholders": { "time": { "content": "$1", "example": "14:32" } }
   },
 
+  "unencrypted": { "message": "Contacted without encryption" },
+
   "showingDestinations": {
     "message": "Showing $count$ destinations",
     "placeholders": { "count": { "content": "$1", "example": "7" } }

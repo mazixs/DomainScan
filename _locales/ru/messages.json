@@ -18,6 +18,8 @@
     "placeholders": { "time": { "content": "$1", "example": "14:32" } }
   },
 
+  "unencrypted": { "message": "Обращение без шифрования" },
+
   "showingDestinations": {
     "message": "Показано адресов: $count$",
     "placeholders": { "count": { "content": "$1", "example": "7" } }
