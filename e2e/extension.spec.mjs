@@ -82,6 +82,16 @@ test.beforeAll(async () => {
         </script>`);
       return;
     }
+    if (request.url === '/deep') {
+      response.setHeader('Content-Type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html>
+        <title>deep</title>
+        <script>
+          fetch(${JSON.stringify(url('img.deep.alpha.test', '/asset'))}).catch(() => {});
+          fetch(${JSON.stringify(url('js.deep.alpha.test', '/asset'))}).catch(() => {});
+        </script>`);
+      return;
+    }
     if (request.url === '/download') {
       response.setHeader('Content-Type', 'application/octet-stream');
       response.setHeader('Content-Disposition', 'attachment; filename="file.bin"');
@@ -362,6 +372,26 @@ test('a destination contacted without encryption says so in its row', async () =
 
   await expect(row.locator('.insecure')).toHaveText('http');
   await expect(row.locator('.insecure')).toHaveAttribute('title', /encryption|шифров/);
+  await page.close();
+  await panel.close();
+});
+
+test('the subdomain mode folds one label and names the host it folded from', async () => {
+  const page = await context.newPage();
+  await page.goto(url('one.deep.alpha.test', '/deep'));
+  const panel = await openPanelFor(page);
+  await expect(panel.locator('#list')).toContainText('img.deep.alpha.test');
+  const observedHosts = await panel.locator('#list li.row').count();
+
+  await panel.locator('.seg-btn[data-mode="collapse"]').click();
+  const folded = panel.locator('#list li.row').filter({ has: panel.locator('.from', { hasText: 'img.deep.alpha.test' }) });
+  await expect(folded.locator('.host')).toHaveText('deep.alpha.test');
+  // Folding is a label, not a merge: every observed host still has its own row.
+  await expect(panel.locator('#list li.row')).toHaveCount(observedHosts);
+
+  // Domains mode still goes all the way to the registrable domain.
+  await panel.locator('.seg-btn[data-mode="registrable"]').click();
+  await expect(panel.locator('#list li.row .host').first()).toHaveText('alpha.test');
   await page.close();
   await panel.close();
 });

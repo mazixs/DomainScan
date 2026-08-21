@@ -109,3 +109,76 @@ test('a row carries the transports of the destination it stands for', () => {
   const grouped = buildDestinationRows(state, { mode: 'registrable' });
   assert.deepEqual(grouped.map((row) => row.transports), [['https', 'http']]);
 });
+
+const FOLDING_STATE = {
+  pageHost: 'news.example',
+  destinations: {
+    'host|img.deep.news.example': {
+      id: 'host|img.deep.news.example', kind: 'host', value: 'img.deep.news.example',
+      party: 'first', requestType: 'image', transports: ['https'],
+      ips: {}, firstSeen: 1, lastSeen: 1, count: 1
+    },
+    'host|js.deep.news.example': {
+      id: 'host|js.deep.news.example', kind: 'host', value: 'js.deep.news.example',
+      party: 'first', requestType: 'script', transports: ['https'],
+      ips: {}, firstSeen: 2, lastSeen: 2, count: 1
+    },
+    'host|news.example': {
+      id: 'host|news.example', kind: 'host', value: 'news.example',
+      party: 'first', requestType: 'document', transports: ['https'],
+      ips: {}, firstSeen: 3, lastSeen: 3, count: 1
+    },
+    'ip|203.0.113.42': {
+      id: 'ip|203.0.113.42', kind: 'ip', value: '203.0.113.42',
+      party: 'ip', requestType: 'other', transports: ['https'],
+      ips: {}, firstSeen: 4, lastSeen: 4, count: 1
+    }
+  }
+};
+
+test('the subdomain mode folds one label and keeps the host it folded from', () => {
+  const rows = buildDestinationRows(FOLDING_STATE, { mode: 'collapse' });
+
+  assert.deepEqual(rows.map((row) => row.display), [
+    'deep.news.example',
+    'deep.news.example',
+    'news.example',
+    '203.0.113.42'
+  ]);
+  assert.deepEqual(rows.map((row) => row.foldedFrom), [
+    'img.deep.news.example',
+    'js.deep.news.example',
+    null,
+    null
+  ]);
+});
+
+test('the subdomain mode keeps one row per observed host', () => {
+  const rows = buildDestinationRows(FOLDING_STATE, { mode: 'collapse' });
+  const exact = buildDestinationRows(FOLDING_STATE, { mode: 'exact' });
+
+  assert.equal(rows.length, exact.length);
+  assert.deepEqual(rows.map((row) => row.grouped), [1, 1, 1, 1]);
+  assert.equal(new Set(rows.map((row) => row.key)).size, rows.length);
+});
+
+test('the exact mode states hosts as observed and folds nothing', () => {
+  const rows = buildDestinationRows(FOLDING_STATE, { mode: 'exact' });
+
+  assert.deepEqual(rows.map((row) => row.display), [
+    'img.deep.news.example',
+    'js.deep.news.example',
+    'news.example',
+    '203.0.113.42'
+  ]);
+  assert.deepEqual(rows.map((row) => row.foldedFrom), [null, null, null, null]);
+});
+
+test('the registrable mode still groups hosts of one domain', () => {
+  const rows = buildDestinationRows(FOLDING_STATE, { mode: 'registrable' });
+
+  assert.deepEqual(rows.map((row) => row.display), ['news.example', '203.0.113.42']);
+  assert.deepEqual(rows.map((row) => row.grouped), [3, 1]);
+  // A grouped row stands for several hosts, so naming one of them would misstate it.
+  assert.deepEqual(rows.map((row) => row.foldedFrom), [null, null]);
+});

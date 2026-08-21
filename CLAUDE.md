@@ -125,8 +125,10 @@ keep it simple and native, no cockpit effect.
 - Exact evidence is primary; interpretation is secondary and explicitly qualified. No numeric scores.
 - Copy actions are **distinct and local**: copy domains, copy IP addresses, copy selected rows — never
   one ambiguous "copy everything".
-- Accumulate continuously with no visual churn and no silent data loss. Display modes (exact hosts /
-  collapse subdomains / registrable domains) are display transformations only, never deletion.
+- Accumulate continuously with no visual churn and no silent data loss. Display modes are display
+  transformations only, never deletion: **exact** hosts as observed, **collapse** folds one label per
+  row (bounded by the registrable domain) and names the host it folded from, **registrable** groups a
+  domain's hosts into one row with a count.
 - **WCAG 2.2 AA**: keyboard operation, visible focus, reduced motion, ≥4.5:1 text contrast,
   non-color-only status, body ≥14px / annotations ≥12px, ≥32px targets.
 - Side panel viewport is 420×760; must stay usable 360–520px with no horizontal overflow and no console

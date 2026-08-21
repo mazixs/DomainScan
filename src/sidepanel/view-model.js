@@ -1,4 +1,4 @@
-import { registrableDomain } from '../lib/domain.js';
+import { foldSubdomain, registrableDomain } from '../lib/domain.js';
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
@@ -20,15 +20,20 @@ function sourceDestinations(state, query) {
     });
 }
 
+function displayValue(destination, mode) {
+  if (destination.kind !== 'host') return destination.value;
+  if (mode === 'registrable') return registrableDomain(destination.value);
+  if (mode === 'collapse') return foldSubdomain(destination.value);
+  return destination.value;
+}
+
 export function buildDestinationRows(state, { mode = 'exact', query = '' } = {}) {
   const destinations = sourceDestinations(state, query);
   const rows = [];
   const groupedRows = new Map();
 
   for (const destination of destinations) {
-    const display = mode === 'registrable' && destination.kind === 'host'
-      ? registrableDomain(destination.value)
-      : destination.value;
+    const display = displayValue(destination, mode);
     const key = mode === 'registrable'
       ? `registrable|${destination.kind}|${display}`
       : `${mode}|${destination.id}`;
@@ -47,6 +52,9 @@ export function buildDestinationRows(state, { mode = 'exact', query = '' } = {})
     const row = {
       key,
       display,
+      // The host a folded row stands for. A grouped row stands for several, so it
+      // names none of them and says how many instead.
+      foldedFrom: mode === 'collapse' && display !== destination.value ? destination.value : null,
       kind: destination.kind,
       party: destination.party,
       requestType: destination.requestType,

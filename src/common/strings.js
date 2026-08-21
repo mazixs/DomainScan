@@ -20,6 +20,7 @@ export const FALLBACK_EN = {
   showingDestinations: 'Showing $COUNT$ destinations',
   recordingSince: 'Record kept since $TIME$',
   unencrypted: 'Contacted without encryption',
+  foldedFrom: 'from',
 
   fingerprintTitle: 'Possible fingerprinting',
   fingerprintTag: 'Heuristic',
@@ -44,7 +45,7 @@ export const FALLBACK_EN = {
   modeCollapse: 'Subdomains',
   modeRegistrable: 'Domains',
   modeExactHint: 'Every hostname exactly as observed. View only, nothing deleted.',
-  modeCollapseHint: 'Subdomains shown in context of their domain. View only, nothing deleted.',
+  modeCollapseHint: 'Subdomain prefixes folded into the parent. View only, nothing deleted.',
   modeRegistrableHint: 'Grouped by registrable domain. View only, nothing deleted.',
 
   partyFirst: 'This site',

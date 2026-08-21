@@ -20,6 +20,8 @@
 
   "unencrypted": { "message": "Contacted without encryption" },
 
+  "foldedFrom": { "message": "from" },
+
   "showingDestinations": {
     "message": "Showing $count$ destinations",
     "placeholders": { "count": { "content": "$1", "example": "7" } }
@@ -47,7 +49,7 @@
   "modeCollapse": { "message": "Subdomains" },
   "modeRegistrable": { "message": "Domains" },
   "modeExactHint": { "message": "Every hostname exactly as observed. View only, nothing deleted." },
-  "modeCollapseHint": { "message": "Subdomains shown in context of their domain. View only, nothing deleted." },
+  "modeCollapseHint": { "message": "Subdomain prefixes folded into the parent. View only, nothing deleted." },
   "modeRegistrableHint": { "message": "Grouped by registrable domain. View only, nothing deleted." },
 
   "partyFirst": { "message": "This site" },

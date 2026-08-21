@@ -124,7 +124,13 @@ tab, hostname, and site session still match. This prevents a late response from 
 being attached to a new site session.
 
 One hostname retains all unique IPs with first/last timestamps and counts, and every transport it
-was reached over. A destination contacted over plain `http` or `ws` shows that scheme in its row, as
+was reached over.
+
+The three display modes are transformations of the same evidence. **Exact** states every hostname as
+observed. **Subdomains** folds one label towards the parent — never past the registrable domain,
+because a public suffix alone is not a site — keeps one row per observed host, and names the host each
+folded label stands for. **Domains** groups hosts of one registrable domain into a single row and says
+how many were merged. Nothing is ever removed by a mode. A destination contacted over plain `http` or `ws` shows that scheme in its row, as
 a fact with its explanation in the title — never as a warning or a score. The panel exposes those
 addresses under the host row. “Copy IP addresses” combines visible resolved and direct IP values
 and removes duplicates.

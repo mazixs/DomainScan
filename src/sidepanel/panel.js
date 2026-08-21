@@ -383,6 +383,7 @@ function updateRowNode(li, row) {
     row.party,
     row.requestTypes.join(','),
     row.transports.join(','),
+    row.foldedFrom || '',
     row.grouped
   ].join('|');
   if (li.dataset.sub !== subSignature) {
@@ -404,6 +405,17 @@ function updateRowNode(li, row) {
     rtype.className = 'rtype';
     rtype.textContent = row.requestTypes.map((type) => t('requestType_' + type)).join(', ');
     sub.appendChild(rtype);
+
+    // A folded label names the host it stands for, so nothing observed is hidden.
+    if (row.foldedFrom) {
+      sub.appendChild(sep());
+      const origin = document.createElement('span');
+      origin.className = 'from';
+      const host = document.createElement('code');
+      host.textContent = row.foldedFrom;
+      origin.append(t('foldedFrom') + ' ', host);
+      sub.appendChild(origin);
+    }
 
     // Plain http or ws is a fact about the request, stated as the scheme itself
     // rather than as a warning: the explanation lives in the title.

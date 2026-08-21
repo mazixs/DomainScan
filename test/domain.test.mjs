@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  foldSubdomain,
   registrableDomain,
   isIpLiteral,
   classifyParty,
@@ -112,4 +113,21 @@ test('classifyParty: different registrable domain is third party', () => {
 test('classifyParty: an IP literal is classified as ip regardless of page host', () => {
   assert.equal(classifyParty('203.0.113.42', 'news.example'), 'ip');
   assert.equal(classifyParty('203.0.113.42', 'anything.example'), 'ip');
+});
+
+test('folding a subdomain drops one label without passing the registrable domain', () => {
+  assert.equal(foldSubdomain('img.news.example'), 'news.example');
+  assert.equal(foldSubdomain('a.b.news.example'), 'b.news.example');
+  assert.equal(foldSubdomain('news.example'), 'news.example');
+  assert.equal(foldSubdomain('www.example.co.uk'), 'example.co.uk');
+  // co.uk is a public suffix, not a site: folding must stop at the registrable domain.
+  assert.equal(foldSubdomain('example.co.uk'), 'example.co.uk');
+  assert.equal(foldSubdomain('a.b.example.co.uk'), 'b.example.co.uk');
+});
+
+test('folding leaves hosts that cannot be folded untouched', () => {
+  assert.equal(foldSubdomain('localhost'), 'localhost');
+  assert.equal(foldSubdomain('203.0.113.42'), '203.0.113.42');
+  assert.equal(foldSubdomain('2001:db8::1'), '2001:db8::1');
+  assert.equal(foldSubdomain(''), '');
 });

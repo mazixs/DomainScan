@@ -168,6 +168,22 @@ export function registrableDomain(host) {
   return labels.slice(labels.length - registrableLabels).join('.');
 }
 
+/**
+ * The same host one level up: its leftmost label removed. Folding never passes the
+ * registrable domain, because a public suffix on its own (co.uk) is not a site.
+ * IP literals and hosts that are already their registrable domain are unchanged.
+ */
+export function foldSubdomain(host) {
+  const h = normalizeHostname(host);
+  if (!h || normalizeIpLiteral(h)) return h;
+  const registrable = registrableDomain(h);
+  if (!registrable || h === registrable) return h;
+  const cut = h.indexOf('.');
+  if (cut < 0) return h;
+  const folded = h.slice(cut + 1);
+  return folded.length < registrable.length ? registrable : folded;
+}
+
 /** Stable site-session key: registrable domain, normalized IP, or single-label host. */
 export function siteKeyForHost(host) {
   return registrableDomain(host);
