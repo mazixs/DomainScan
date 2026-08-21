@@ -161,6 +161,9 @@ body{
 .site-host{font-size:18px;font-weight:650;color:var(--ink);letter-spacing:-0.01em;overflow-wrap:anywhere;margin:0;min-width:0}
 .site-count{font-size:13px;color:var(--ink-2);white-space:nowrap}
 .site-count b{color:var(--ink);font-weight:650}
+.record-since{font-size:12px;color:var(--ink-3);margin:4px 0 0;overflow-wrap:anywhere}
+.record-since:empty{display:none}
+.insecure{font-family:var(--mono);color:var(--ink-2);border-bottom:1px dotted var(--line-2)}
 
 /* ---------- fingerprint note ---------- */
 .note{
@@ -288,6 +291,9 @@ body{
 .sep{color:var(--line-2)}
 .rtype{color:var(--ink-3);text-transform:capitalize}
 .grouped{color:var(--ink-3)}
+.from{color:var(--ink-3)}
+.via-worker{color:var(--ink-3);border-bottom:1px dotted var(--line-2)}
+.from code{font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
 
 .copy-btn{
   flex:none;

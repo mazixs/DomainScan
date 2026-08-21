@@ -15,7 +15,7 @@ function stateWithDestinations() {
         kind: 'host',
         value: 'cdn.news.example.co.uk',
         party: 'first',
-        requestType: 'script',
+        requestTypes: ['script'],
         firstSeen: 1,
         ips: {
           '203.0.113.10': { value: '203.0.113.10' },
@@ -27,7 +27,7 @@ function stateWithDestinations() {
         kind: 'host',
         value: 'img.news.example.co.uk',
         party: 'first',
-        requestType: 'image',
+        requestTypes: ['image'],
         firstSeen: 2,
         ips: {
           '203.0.113.10': { value: '203.0.113.10' },
@@ -39,7 +39,7 @@ function stateWithDestinations() {
         kind: 'ip',
         value: '192.0.2.4',
         party: 'ip',
-        requestType: 'fetch',
+        requestTypes: ['fetch'],
         firstSeen: 3,
         ips: {}
       }
@@ -84,4 +84,151 @@ test('domain copy excludes direct IP rows and respects the search-filtered rows'
 
   assert.deepEqual(collectVisibleDomains(rows), ['img.news.example.co.uk']);
   assert.deepEqual(collectVisibleIps(rows), ['203.0.113.10', '203.0.113.11']);
+});
+
+test('a row carries the transports of the destination it stands for', () => {
+  const state = {
+    pageHost: 'news.example',
+    destinations: {
+      'host|a.news.example': {
+        id: 'host|a.news.example', kind: 'host', value: 'a.news.example',
+        party: 'first', requestTypes: ['script'], transports: ['https'],
+        ips: {}, firstSeen: 1, lastSeen: 1, count: 1
+      },
+      'host|b.news.example': {
+        id: 'host|b.news.example', kind: 'host', value: 'b.news.example',
+        party: 'first', requestTypes: ['image'], transports: ['http', 'https'],
+        ips: {}, firstSeen: 2, lastSeen: 2, count: 1
+      }
+    }
+  };
+
+  const exact = buildDestinationRows(state, { mode: 'exact' });
+  assert.deepEqual(exact.map((row) => row.transports), [['https'], ['http', 'https']]);
+
+  const grouped = buildDestinationRows(state, { mode: 'registrable' });
+  assert.deepEqual(grouped.map((row) => row.transports), [['https', 'http']]);
+});
+
+const FOLDING_STATE = {
+  pageHost: 'news.example',
+  destinations: {
+    'host|img.deep.news.example': {
+      id: 'host|img.deep.news.example', kind: 'host', value: 'img.deep.news.example',
+      party: 'first', requestTypes: ['image'], transports: ['https'],
+      ips: {}, firstSeen: 1, lastSeen: 1, count: 1
+    },
+    'host|js.deep.news.example': {
+      id: 'host|js.deep.news.example', kind: 'host', value: 'js.deep.news.example',
+      party: 'first', requestTypes: ['script'], transports: ['https'],
+      ips: {}, firstSeen: 2, lastSeen: 2, count: 1
+    },
+    'host|news.example': {
+      id: 'host|news.example', kind: 'host', value: 'news.example',
+      party: 'first', requestTypes: ['document'], transports: ['https'],
+      ips: {}, firstSeen: 3, lastSeen: 3, count: 1
+    },
+    'ip|203.0.113.42': {
+      id: 'ip|203.0.113.42', kind: 'ip', value: '203.0.113.42',
+      party: 'ip', requestTypes: ['other'], transports: ['https'],
+      ips: {}, firstSeen: 4, lastSeen: 4, count: 1
+    }
+  }
+};
+
+test('the subdomain mode folds one label and keeps the host it folded from', () => {
+  const rows = buildDestinationRows(FOLDING_STATE, { mode: 'collapse' });
+
+  assert.deepEqual(rows.map((row) => row.display), [
+    'deep.news.example',
+    'deep.news.example',
+    'news.example',
+    '203.0.113.42'
+  ]);
+  assert.deepEqual(rows.map((row) => row.foldedFrom), [
+    'img.deep.news.example',
+    'js.deep.news.example',
+    null,
+    null
+  ]);
+});
+
+test('the subdomain mode keeps one row per observed host', () => {
+  const rows = buildDestinationRows(FOLDING_STATE, { mode: 'collapse' });
+  const exact = buildDestinationRows(FOLDING_STATE, { mode: 'exact' });
+
+  assert.equal(rows.length, exact.length);
+  assert.deepEqual(rows.map((row) => row.grouped), [1, 1, 1, 1]);
+  assert.equal(new Set(rows.map((row) => row.key)).size, rows.length);
+});
+
+test('the exact mode states hosts as observed and folds nothing', () => {
+  const rows = buildDestinationRows(FOLDING_STATE, { mode: 'exact' });
+
+  assert.deepEqual(rows.map((row) => row.display), [
+    'img.deep.news.example',
+    'js.deep.news.example',
+    'news.example',
+    '203.0.113.42'
+  ]);
+  assert.deepEqual(rows.map((row) => row.foldedFrom), [null, null, null, null]);
+});
+
+test('the registrable mode still groups hosts of one domain', () => {
+  const rows = buildDestinationRows(FOLDING_STATE, { mode: 'registrable' });
+
+  assert.deepEqual(rows.map((row) => row.display), ['news.example', '203.0.113.42']);
+  assert.deepEqual(rows.map((row) => row.grouped), [3, 1]);
+  // A grouped row stands for several hosts, so naming one of them would misstate it.
+  assert.deepEqual(rows.map((row) => row.foldedFrom), [null, null]);
+});
+
+test('a row states how the destination was reached', () => {
+  const state = {
+    pageHost: 'app.pwa.test',
+    destinations: {
+      'host|a.vendor.test': {
+        id: 'host|a.vendor.test', kind: 'host', value: 'a.vendor.test',
+        party: 'third', requestTypes: ['fetch'], transports: ['https'], sources: ['page'],
+        ips: {}, firstSeen: 1, lastSeen: 1, count: 1
+      },
+      'host|b.vendor.test': {
+        id: 'host|b.vendor.test', kind: 'host', value: 'b.vendor.test',
+        party: 'third', requestTypes: ['fetch'], transports: ['https'], sources: ['worker'],
+        ips: {}, firstSeen: 2, lastSeen: 2, count: 1
+      },
+      'host|c.vendor.test': {
+        id: 'host|c.vendor.test', kind: 'host', value: 'c.vendor.test',
+        party: 'third', requestTypes: ['fetch'], transports: ['https'], sources: ['page', 'worker'],
+        ips: {}, firstSeen: 3, lastSeen: 3, count: 1
+      }
+    }
+  };
+
+  assert.deepEqual(
+    buildDestinationRows(state, { mode: 'exact' }).map((row) => row.sources),
+    [['page'], ['worker'], ['page', 'worker']]
+  );
+  assert.deepEqual(
+    buildDestinationRows(state, { mode: 'registrable' }).map((row) => row.sources),
+    [['page', 'worker']]
+  );
+});
+
+test('a row exposes every category the destination was seen as', () => {
+  const state = {
+    pageHost: 'news.example',
+    destinations: {
+      'host|cdn.news.example': {
+        id: 'host|cdn.news.example', kind: 'host', value: 'cdn.news.example',
+        party: 'first', requestTypes: ['image', 'document'], transports: ['https'], sources: ['page'],
+        ips: {}, firstSeen: 1, lastSeen: 1, count: 2
+      }
+    }
+  };
+
+  assert.deepEqual(
+    buildDestinationRows(state, { mode: 'exact' })[0].requestTypes,
+    ['image', 'document']
+  );
 });

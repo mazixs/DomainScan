@@ -43,6 +43,14 @@ for (const p of Object.values(manifest.icons ?? {})) refs.push(p);
 for (const p of Object.values(manifest.action?.default_icon ?? {})) refs.push(p);
 for (const r of refs) check(existsSync(r), `manifest references a missing file: ${r}`);
 
+// The MAIN-world probe is registered at runtime, so the manifest cannot vouch for it.
+const dynamicScripts = ['src/content/fingerprint-probe.js'];
+for (const f of dynamicScripts) {
+  check(existsSync(f), `dynamically registered script is missing: ${f}`);
+}
+check(manifest.permissions?.includes('scripting'),
+  'the "scripting" permission is required to register the MAIN-world probe');
+
 // ---- locales ----
 const localesDir = '_locales';
 const localeKeys = {};

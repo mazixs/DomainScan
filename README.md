@@ -9,11 +9,18 @@ copying without turning ordinary requests into a threat score.
 - Every browser tab has an independent history.
 - Paths and subdomains of one registrable domain share that history.
 - Navigating the same tab to another registrable domain starts a fresh history.
+- The site of a tab comes from its committed URL, so downloads and cancelled navigations never
+  replace it, while the request they made stays visible in the current record.
+- Open tabs are seeded when the extension starts, and the panel states since when the record for the
+  current site is kept.
 - Switching tabs immediately rebinds the side panel to the selected tab.
 - State survives Manifest V3 service-worker suspension through `chrome.storage.session`.
 - Every observed resolved IP is retained per hostname; direct-IP requests remain visible.
 - The full ICANN and PRIVATE Public Suffix List is bundled for registrable-domain decisions.
-- Local page instrumentation reports exact access to selected browser-environment APIs.
+- Requests made by a site's service worker are recorded for the tabs showing that origin and marked
+  as worker traffic.
+- Local page instrumentation reports exact access to selected browser-environment APIs, and can be
+  switched off for one site or for all of them when a site reacts badly to being instrumented.
 - English and Russian interfaces are included.
 
 DomainScan does not call GeoIP, analytics, telemetry, or other external services. It observes
@@ -72,11 +79,14 @@ and remaining platform limitations are in `output/technical-audit.md`.
 - `webRequest`: observes request and response metadata without blocking or modifying traffic.
 - `storage`: preserves per-tab state across service-worker suspension.
 - `sidePanel`: provides the persistent browser interface.
+- `scripting`: registers the MAIN-world probe at runtime, which is what allows switching page
+  instrumentation off per site or entirely. No new page access is granted by it.
 - `<all_urls>` host access: required to observe arbitrary request destinations and instrument the
   selected local APIs on pages and frames.
 
-The extension deliberately does not request the `tabs` permission: the tab identifier and tab
-activation/removal events used here are available without reading sensitive tab properties.
+The extension deliberately does not request the `tabs` permission: tab identifiers, activation and
+removal events, and the committed tab URLs used to decide the current site are all available through
+the host permissions already granted.
 
 ## Platform limits
 
@@ -88,3 +98,11 @@ activation/removal events used here are available without reading sensitive tab 
   extension does not know whether a permission prompt was approved or whether a returned value was
   useful to the page.
 - `chrome.storage.session` is browser-session storage. Closing a tab removes its DomainScan state.
+- A service worker request is only attributable while a tab shows its origin. What a worker does with
+  no such tab open — a push, a background sync — is not recorded, because there is no tab to record it
+  for.
+- Page instrumentation reports native sources, keeps native function shape, and strips its own
+  frames from errors, so ordinary tampering checks do not see it. No in-page instrumentation can be
+  proven invisible to every check, so a site behind aggressive bot protection can still react to it —
+  that is what the per-site switch is for. A page already open keeps whatever instrumentation it was
+  loaded with until it is reloaded.

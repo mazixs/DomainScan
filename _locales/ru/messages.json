@@ -13,6 +13,24 @@
 
   "activeTab": { "message": "Активная вкладка" },
   "uniqueDestinations": { "message": "уникальных адресов" },
+  "recordingSince": {
+    "message": "Запись ведется с $time$",
+    "placeholders": { "time": { "content": "$1", "example": "14:32" } }
+  },
+
+  "unencrypted": { "message": "Обращение без шифрования" },
+
+  "foldedFrom": { "message": "из" },
+
+  "viaServiceWorker": { "message": "через service worker" },
+  "viaServiceWorkerHint": { "message": "Запрос сделал service worker сайта, общий для всех его вкладок, а не эта страница." },
+
+  "watchApisStop": { "message": "Не отслеживать обращения к API" },
+  "watchApisStart": { "message": "Отслеживать обращения к API" },
+  "watchSiteStop": { "message": "Не отслеживать на этом сайте" },
+  "watchSiteStart": { "message": "Отслеживать на этом сайте" },
+  "apiWatchOff": { "message": "Обращения к API браузера не отслеживаются." },
+
   "showingDestinations": {
     "message": "Показано адресов: $count$",
     "placeholders": { "count": { "content": "$1", "example": "7" } }
@@ -40,7 +58,7 @@
   "modeCollapse": { "message": "Поддомены" },
   "modeRegistrable": { "message": "Домены" },
   "modeExactHint": { "message": "Каждый узел точно так, как он наблюдался. Только просмотр, ничего не удаляется." },
-  "modeCollapseHint": { "message": "Поддомены показаны в контексте их домена. Только просмотр, ничего не удаляется." },
+  "modeCollapseHint": { "message": "Префиксы поддоменов свернуты к родительскому домену. Только просмотр, ничего не удаляется." },
   "modeRegistrableHint": { "message": "Сгруппировано по регистрируемому домену. Только просмотр, ничего не удаляется." },
 
   "partyFirst": { "message": "Этот сайт" },

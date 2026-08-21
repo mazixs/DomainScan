@@ -13,6 +13,24 @@
 
   "activeTab": { "message": "Active tab" },
   "uniqueDestinations": { "message": "unique destinations" },
+  "recordingSince": {
+    "message": "Record kept since $time$",
+    "placeholders": { "time": { "content": "$1", "example": "14:32" } }
+  },
+
+  "unencrypted": { "message": "Contacted without encryption" },
+
+  "foldedFrom": { "message": "from" },
+
+  "viaServiceWorker": { "message": "via service worker" },
+  "viaServiceWorkerHint": { "message": "Requested by the site's service worker, which every tab of this site shares — not by this page." },
+
+  "watchApisStop": { "message": "Stop watching browser API use" },
+  "watchApisStart": { "message": "Watch browser API use" },
+  "watchSiteStop": { "message": "Stop watching on this site" },
+  "watchSiteStart": { "message": "Watch on this site" },
+  "apiWatchOff": { "message": "Browser API use is not being watched." },
+
   "showingDestinations": {
     "message": "Showing $count$ destinations",
     "placeholders": { "count": { "content": "$1", "example": "7" } }
@@ -40,7 +58,7 @@
   "modeCollapse": { "message": "Subdomains" },
   "modeRegistrable": { "message": "Domains" },
   "modeExactHint": { "message": "Every hostname exactly as observed. View only, nothing deleted." },
-  "modeCollapseHint": { "message": "Subdomains shown in context of their domain. View only, nothing deleted." },
+  "modeCollapseHint": { "message": "Subdomain prefixes folded into the parent. View only, nothing deleted." },
   "modeRegistrableHint": { "message": "Grouped by registrable domain. View only, nothing deleted." },
 
   "partyFirst": { "message": "This site" },

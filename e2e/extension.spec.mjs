@@ -82,6 +82,44 @@ test.beforeAll(async () => {
         </script>`);
       return;
     }
+    if (request.url === '/worker-sw.js') {
+      response.setHeader('Content-Type', 'text/javascript');
+      response.end(`
+        self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+        self.addEventListener('fetch', (event) => {
+          if (event.request.url.includes('/through-worker')) {
+            event.respondWith(fetch(${JSON.stringify(url('worker.vendor.test', '/asset'))}));
+          }
+        });`);
+      return;
+    }
+    if (request.url === '/worker-page') {
+      response.setHeader('Content-Type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html>
+        <title>worker</title>
+        <script>
+          navigator.serviceWorker.register('/worker-sw.js')
+            .then(() => navigator.serviceWorker.ready)
+            .then(() => { window.__swReady = true; });
+        </script>`);
+      return;
+    }
+    if (request.url === '/deep') {
+      response.setHeader('Content-Type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html>
+        <title>deep</title>
+        <script>
+          fetch(${JSON.stringify(url('img.deep.alpha.test', '/asset'))}).catch(() => {});
+          fetch(${JSON.stringify(url('js.deep.alpha.test', '/asset'))}).catch(() => {});
+        </script>`);
+      return;
+    }
+    if (request.url === '/download') {
+      response.setHeader('Content-Type', 'application/octet-stream');
+      response.setHeader('Content-Disposition', 'attachment; filename="file.bin"');
+      response.end('payload');
+      return;
+    }
     if (request.url === '/forgery') {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       response.end(`<!doctype html>
@@ -120,7 +158,7 @@ test.beforeAll(async () => {
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
       '--host-resolver-rules=MAP *.test 127.0.0.1, EXCLUDE localhost',
-      `--unsafely-treat-insecure-origin-as-secure=${url('signals.alpha.test')}`,
+      `--unsafely-treat-insecure-origin-as-secure=${url('signals.alpha.test')},${url('pwa.alpha.test')}`,
       '--no-proxy-server'
     ]
   });
@@ -224,4 +262,209 @@ test('rejects a page-forged signal and replacement channel', async () => {
   await expect(panel.locator('#site-host')).toHaveText('forgery.alpha.test');
   await expect(panel.locator('#fp-note')).toBeHidden();
   await expect(panel.locator('#signal-list > li')).toHaveCount(0);
+});
+
+test('keeps page instrumentation invisible to native-source and stack checks', async () => {
+  const page = await context.newPage();
+  await page.goto(url('cloak.alpha.test'));
+
+  const report = await page.evaluate(() => {
+    const targets = {
+      getImageData: CanvasRenderingContext2D.prototype.getImageData,
+      toDataURL: HTMLCanvasElement.prototype.toDataURL,
+      toBlob: HTMLCanvasElement.prototype.toBlob,
+      webglGetParameter: WebGLRenderingContext.prototype.getParameter,
+      webgl2GetParameter: WebGL2RenderingContext.prototype.getParameter,
+      floatFrequencyData: AnalyserNode.prototype.getFloatFrequencyData,
+      byteFrequencyData: AnalyserNode.prototype.getByteFrequencyData,
+      resolvedOptions: Intl.DateTimeFormat.prototype.resolvedOptions,
+      getTimezoneOffset: Date.prototype.getTimezoneOffset,
+      getCurrentPosition: Geolocation.prototype.getCurrentPosition,
+      watchPosition: Geolocation.prototype.watchPosition,
+      languageGetter: Object.getOwnPropertyDescriptor(Navigator.prototype, 'language').get,
+      languagesGetter: Object.getOwnPropertyDescriptor(Navigator.prototype, 'languages').get,
+      functionToString: Function.prototype.toString
+    };
+    const entries = Object.entries(targets);
+
+    let stack = '';
+    try {
+      document.createElement('canvas').getContext('2d').getImageData(0, 0, 0, 0);
+    } catch (error) {
+      stack = String(error.stack || '');
+    }
+
+    return {
+      patchedSource: entries
+        .filter(([, fn]) => !Function.prototype.toString.call(fn).includes('[native code]'))
+        .map(([key]) => key),
+      constructable: entries
+        .filter(([, fn]) => Object.getOwnPropertyNames(fn).includes('prototype'))
+        .map(([key]) => key),
+      stack
+    };
+  });
+
+  expect(report.patchedSource).toEqual([]);
+  expect(report.constructable).toEqual([]);
+  expect(report.stack).not.toContain('chrome-extension://');
+  await page.close();
+});
+
+test('a download from another site never becomes the site of the tab', async () => {
+  const page = await context.newPage();
+  await page.goto(url('shop.alpha.test'));
+  const panel = await openPanelFor(page);
+  await expect(panel.locator('#site-host')).toHaveText('shop.alpha.test');
+
+  const download = page.waitForEvent('download', { timeout: 5000 }).catch(() => null);
+  await page.evaluate((target) => { window.location.href = target; },
+    url('files.gamma.test', '/download'));
+  await download;
+
+  await expect(panel.locator('#site-host')).toHaveText('shop.alpha.test');
+  // The request the tab really made stays visible under the site that made it.
+  await expect(panel.locator('#list')).toContainText('cdn.alpha.test');
+  await expect(panel.locator('#list')).toContainText('files.gamma.test');
+  await page.close();
+  await panel.close();
+});
+
+test('the panel states since when the record for this site is kept', async () => {
+  const page = await context.newPage();
+  await page.goto(url('one.alpha.test'));
+  const panel = await openPanelFor(page);
+
+  await expect(panel.locator('#record-since')).toHaveText(/\d{1,2}[:.]\d{2}/);
+  await page.close();
+  await panel.close();
+});
+
+test('keeps an expanded IP list and keyboard focus while new destinations arrive', async () => {
+  const page = await context.newPage();
+  await page.goto(url('live.alpha.test'));
+  const panel = await openPanelFor(page);
+  const row = panel.locator('#list li.row').filter({ hasText: 'cdn.alpha.test' });
+  await expect(row).toHaveCount(1);
+
+  await row.locator('.ip-details summary').click();
+  await row.locator('.copy-btn').focus();
+  await expect(row.locator('.ip-details')).toHaveJSProperty('open', true);
+
+  // A destination arriving from the page must not disturb what the user is doing.
+  await page.evaluate((target) => fetch(target).catch(() => {}), url('later.alpha.test', '/asset'));
+  await expect(panel.locator('#list')).toContainText('later.alpha.test');
+
+  await expect(row.locator('.ip-details')).toHaveJSProperty('open', true);
+  expect(await panel.evaluate(() => {
+    const active = document.activeElement;
+    return active ? active.className : null;
+  })).toContain('copy-btn');
+
+  await page.close();
+  await panel.close();
+});
+
+test('reuses the row element of a destination instead of rebuilding the list', async () => {
+  const page = await context.newPage();
+  await page.goto(url('stable.alpha.test'));
+  const panel = await openPanelFor(page);
+  await expect(panel.locator('#list')).toContainText('cdn.alpha.test');
+
+  await panel.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('#list li.row'));
+    for (const row of rows) row.dataset.probe = 'marked';
+  });
+  await page.evaluate((target) => fetch(target).catch(() => {}), url('fresh.alpha.test', '/asset'));
+  await expect(panel.locator('#list')).toContainText('fresh.alpha.test');
+
+  expect(await panel.evaluate(
+    () => document.querySelectorAll('#list li.row[data-probe="marked"]').length
+  )).toBeGreaterThan(0);
+
+  await page.close();
+  await panel.close();
+});
+
+test('a destination contacted without encryption says so in its row', async () => {
+  const page = await context.newPage();
+  await page.goto(url('plain.alpha.test'));
+  const panel = await openPanelFor(page);
+  const row = panel.locator('#list li.row').filter({ hasText: 'cdn.alpha.test' });
+
+  await expect(row.locator('.insecure')).toHaveText('http');
+  await expect(row.locator('.insecure')).toHaveAttribute('title', /encryption|шифров/);
+  await page.close();
+  await panel.close();
+});
+
+test('the subdomain mode folds one label and names the host it folded from', async () => {
+  const page = await context.newPage();
+  await page.goto(url('one.deep.alpha.test', '/deep'));
+  const panel = await openPanelFor(page);
+  await expect(panel.locator('#list')).toContainText('img.deep.alpha.test');
+  const observedHosts = await panel.locator('#list li.row').count();
+
+  await panel.locator('.seg-btn[data-mode="collapse"]').click();
+  const folded = panel.locator('#list li.row').filter({ has: panel.locator('.from', { hasText: 'img.deep.alpha.test' }) });
+  await expect(folded.locator('.host')).toHaveText('deep.alpha.test');
+  // Folding is a label, not a merge: every observed host still has its own row.
+  await expect(panel.locator('#list li.row')).toHaveCount(observedHosts);
+
+  // Domains mode still goes all the way to the registrable domain.
+  await panel.locator('.seg-btn[data-mode="registrable"]').click();
+  await expect(panel.locator('#list li.row .host').first()).toHaveText('alpha.test');
+  await page.close();
+  await panel.close();
+});
+
+test('a destination reached only through the site service worker is recorded', async () => {
+  const page = await context.newPage();
+  await page.goto(url('pwa.alpha.test', '/worker-page'));
+  await page.waitForFunction(() => window.__swReady === true, null, { timeout: 15000 });
+  await page.reload();
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null, null, { timeout: 15000 });
+  const panel = await openPanelFor(page);
+
+  // The page asks for its own path; only the worker's own request reaches the network.
+  await page.evaluate(() => fetch('/through-worker').then((r) => r.text()).catch(() => null));
+
+  const row = panel.locator('#list li.row').filter({ hasText: 'worker.vendor.test' });
+  await expect(row).toHaveCount(1);
+  await expect(row.locator('.via-worker')).toHaveAttribute('title', /service worker/i);
+  await page.close();
+  await panel.close();
+});
+
+test('watching page API use can be switched off and back on', async () => {
+  const page = await context.newPage();
+  await page.goto(url('watch.alpha.test'));
+  const panel = await openPanelFor(page);
+
+  await panel.locator('#settings-btn').click();
+  await panel.locator('#toggle-apis').click();
+  // The panel states the change only once the probe is really gone.
+  await expect(panel.locator('#fp-note')).toBeVisible();
+  await panel.close();
+
+  const unwatched = await context.newPage();
+  await unwatched.goto(url('signals.alpha.test', '/signals'));
+  expect(await unwatched.evaluate(
+    () => Function.prototype.toString.call(Date.prototype.getTimezoneOffset).includes('[native code]')
+  )).toBe(true);
+  const unwatchedPanel = await openPanelFor(unwatched);
+  await expect(unwatchedPanel.locator('#signal-list > li')).toHaveCount(0);
+
+  await unwatchedPanel.locator('#settings-btn').click();
+  await unwatchedPanel.locator('#toggle-apis').click();
+  await unwatchedPanel.close();
+  await unwatched.close();
+
+  const watched = await context.newPage();
+  await watched.goto(url('signals.alpha.test', '/signals'));
+  const watchedPanel = await openPanelFor(watched);
+  await expect(watchedPanel.locator('#signal-list > li')).toHaveCount(7);
+  await watchedPanel.close();
+  await watched.close();
+  await page.close();
 });

@@ -15,6 +15,7 @@ export function makeTabState(tabId, now = Date.now()) {
     destinations: {},
     fingerprint: { signals: {} },
     paused: false,
+    siteStartedAt: now,
     updatedAt: now
   };
 }
@@ -34,7 +35,11 @@ export function applyTopLevelNavigation(state, url, now = Date.now()) {
   const siteKey = siteKeyForHost(pageHost);
   const previousSiteKey = state.siteKey ||
     (state.pageHost ? siteKeyForHost(state.pageHost) : null);
-  const changedSite = !!previousSiteKey && previousSiteKey !== siteKey;
+  // Evidence collected while the site was unknown cannot be attributed to the site
+  // that just became known, so it is dropped instead of shown under a wrong host.
+  const changedSite = previousSiteKey
+    ? previousSiteKey !== siteKey
+    : hasEvidence(state);
 
   return {
     ...state,
@@ -43,21 +48,39 @@ export function applyTopLevelNavigation(state, url, now = Date.now()) {
     pageHost,
     destinations: changedSite ? {} : state.destinations,
     fingerprint: changedSite ? { signals: {} } : state.fingerprint,
+    siteStartedAt: changedSite ? now : state.siteStartedAt,
     updatedAt: now
   };
 }
 
-export function recordDestination(state, observation, now = Date.now()) {
-  const rawValue = normalizeHostname(observation && observation.value);
-  if (!rawValue) return state;
-  const value = normalizeIpLiteral(rawValue) || rawValue;
+function hasEvidence(state) {
+  return Object.keys(state.destinations || {}).length > 0 ||
+    Object.keys((state.fingerprint && state.fingerprint.signals) || {}).length > 0;
+}
 
-  const kind = observation.kind || (isIpLiteral(value) ? 'ip' : 'host');
-  const id = `${kind}|${value}`;
+/** The stable identity of a destination, so no caller has to build the key itself. */
+export function destinationIdentity(value) {
+  const raw = normalizeHostname(value);
+  if (!raw) return null;
+  const normalized = normalizeIpLiteral(raw) || raw;
+  return {
+    id: `${isIpLiteral(normalized) ? 'ip' : 'host'}|${normalized}`,
+    kind: isIpLiteral(normalized) ? 'ip' : 'host',
+    value: normalized
+  };
+}
+
+export function recordDestination(state, observation, now = Date.now()) {
+  const identity = destinationIdentity(observation && observation.value);
+  if (!identity) return state;
+  const { id, kind, value } = identity;
   const existing = state.destinations[id];
   const destination = existing
     ? {
         ...existing,
+        requestTypes: withObserved(existing.requestTypes, observation.requestType, REQUEST_TYPES, 'other'),
+        transports: withObserved(existing.transports, observation.transport, TRANSPORTS, 'other'),
+        sources: withObserved(existing.sources, observation.source, SOURCES, 'page'),
         lastSeen: now,
         count: existing.count + 1
       }
@@ -66,8 +89,9 @@ export function recordDestination(state, observation, now = Date.now()) {
         kind,
         value,
         party: observation.party,
-        requestType: observation.requestType,
-        transport: observation.transport,
+        requestTypes: withObserved([], observation.requestType, REQUEST_TYPES, 'other'),
+        transports: withObserved([], observation.transport, TRANSPORTS, 'other'),
+        sources: withObserved([], observation.source, SOURCES, 'page'),
         ips: {},
         firstSeen: now,
         lastSeen: now,
@@ -82,6 +106,24 @@ export function recordDestination(state, observation, now = Date.now()) {
     },
     updatedAt: now
   };
+}
+
+const TRANSPORTS = new Set(['https', 'http', 'wss', 'ws', 'other']);
+const SOURCES = new Set(['page', 'worker']);
+const REQUEST_TYPES = new Set([
+  'document', 'image', 'script', 'style', 'fetch',
+  'beacon', 'media', 'font', 'websocket', 'other'
+]);
+
+/**
+ * One destination can be reached in more than one way, and each way observed is a
+ * fact of its own: a host reached over plain http once stays a host reached over
+ * plain http, and a host a service worker contacted stays that too.
+ */
+function withObserved(list, value, allowed, fallback) {
+  const known = Array.isArray(list) ? list.filter((entry) => allowed.has(entry)) : [];
+  const observed = allowed.has(value) ? value : fallback;
+  return known.includes(observed) ? known : [...known, observed];
 }
 
 export function recordResolvedIp(state, host, ip, now = Date.now()) {
@@ -236,6 +278,14 @@ function normalizeFingerprint(value, fallbackTime) {
   return { signals };
 }
 
+function normalizeObserved(stored, allowed, fallback) {
+  const values = [];
+  for (const value of Array.isArray(stored) ? stored : [stored]) {
+    if (allowed.has(value) && !values.includes(value)) values.push(value);
+  }
+  return values.length > 0 ? values : [fallback];
+}
+
 /** Coerce persisted or legacy data into the current TabState schema. */
 export function normalizeTabState(value, now = Date.now()) {
   const source = value && typeof value === 'object' ? value : {};
@@ -258,8 +308,17 @@ export function normalizeTabState(value, now = Date.now()) {
       kind,
       value,
       party: kind === 'ip' ? 'ip' : candidate.party || 'third',
-      requestType: candidate.requestType || 'other',
-      transport: candidate.transport || 'other',
+      requestTypes: normalizeObserved(
+        Array.isArray(candidate.requestTypes) ? candidate.requestTypes : [candidate.requestType],
+        REQUEST_TYPES,
+        'other'
+      ),
+      transports: normalizeObserved(
+        Array.isArray(candidate.transports) ? candidate.transports : [candidate.transport],
+        TRANSPORTS,
+        'other'
+      ),
+      sources: normalizeObserved(candidate.sources, SOURCES, 'page'),
       ips: kind === 'host' ? normalizeIpHistory(candidate) : {},
       firstSeen: Number.isFinite(candidate.firstSeen) ? candidate.firstSeen : updatedAt,
       lastSeen: Number.isFinite(candidate.lastSeen) ? candidate.lastSeen : updatedAt,
@@ -275,6 +334,7 @@ export function normalizeTabState(value, now = Date.now()) {
     destinations,
     fingerprint: normalizeFingerprint(source.fingerprint, updatedAt),
     paused: !!source.paused,
+    siteStartedAt: Number.isFinite(source.siteStartedAt) ? source.siteStartedAt : updatedAt,
     updatedAt
   };
 }

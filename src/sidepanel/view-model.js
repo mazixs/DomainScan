@@ -1,4 +1,4 @@
-import { registrableDomain } from '../lib/domain.js';
+import { foldSubdomain, registrableDomain } from '../lib/domain.js';
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
@@ -20,15 +20,20 @@ function sourceDestinations(state, query) {
     });
 }
 
+function displayValue(destination, mode) {
+  if (destination.kind !== 'host') return destination.value;
+  if (mode === 'registrable') return registrableDomain(destination.value);
+  if (mode === 'collapse') return foldSubdomain(destination.value);
+  return destination.value;
+}
+
 export function buildDestinationRows(state, { mode = 'exact', query = '' } = {}) {
   const destinations = sourceDestinations(state, query);
   const rows = [];
   const groupedRows = new Map();
 
   for (const destination of destinations) {
-    const display = mode === 'registrable' && destination.kind === 'host'
-      ? registrableDomain(destination.value)
-      : destination.value;
+    const display = displayValue(destination, mode);
     const key = mode === 'registrable'
       ? `registrable|${destination.kind}|${display}`
       : `${mode}|${destination.id}`;
@@ -38,7 +43,9 @@ export function buildDestinationRows(state, { mode = 'exact', query = '' } = {})
     if (existing) {
       existing.grouped += 1;
       existing.ips = unique([...existing.ips, ...ips]);
-      existing.requestTypes = unique([...existing.requestTypes, destination.requestType]);
+      existing.requestTypes = unique([...existing.requestTypes, ...(destination.requestTypes || [])]);
+      existing.transports = unique([...existing.transports, ...(destination.transports || [])]);
+      existing.sources = unique([...existing.sources, ...(destination.sources || [])]);
       if (destination.party === 'third') existing.party = 'third';
       continue;
     }
@@ -46,10 +53,14 @@ export function buildDestinationRows(state, { mode = 'exact', query = '' } = {})
     const row = {
       key,
       display,
+      // The host a folded row stands for. A grouped row stands for several, so it
+      // names none of them and says how many instead.
+      foldedFrom: mode === 'collapse' && display !== destination.value ? destination.value : null,
       kind: destination.kind,
       party: destination.party,
-      requestType: destination.requestType,
-      requestTypes: [destination.requestType],
+      requestTypes: unique(destination.requestTypes || []),
+      transports: unique(destination.transports || []),
+      sources: unique(destination.sources || []),
       grouped: 1,
       ips
     };

@@ -31,15 +31,10 @@
       ) {
         return;
       }
+      // Only the canonical signal name crosses this boundary. The site a signal
+      // belongs to is decided by the extension from the tab's own committed URL,
+      // never from a value read inside the page.
       var payload = { type: 'FINGERPRINT', signal: data.signal };
-      try {
-        var topLocation = window.top && window.top.location;
-        if (topLocation && topLocation.hostname) {
-          payload.pageHost = topLocation.hostname;
-        }
-      } catch (error) {
-        // Cross-origin frames cannot read their top-level location.
-      }
       forwarded[data.signal] = true;
       chrome.runtime.sendMessage(
         payload,

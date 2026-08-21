@@ -73,7 +73,7 @@ export function createPanelConnection({
           } else if (tabId !== boundTabId) {
             return;
           }
-          onState(message.state);
+          onState(message.state, message.settings);
         }
       });
       connectedPort.onDisconnect.addListener(() => {
