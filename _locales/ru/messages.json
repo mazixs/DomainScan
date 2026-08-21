@@ -22,6 +22,9 @@
 
   "foldedFrom": { "message": "из" },
 
+  "viaServiceWorker": { "message": "через service worker" },
+  "viaServiceWorkerHint": { "message": "Запрос сделал service worker сайта, общий для всех его вкладок, а не эта страница." },
+
   "showingDestinations": {
     "message": "Показано адресов: $count$",
     "placeholders": { "count": { "content": "$1", "example": "7" } }

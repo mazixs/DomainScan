@@ -128,6 +128,7 @@ function sampleState() {
     const id = kind + '|' + value;
     destinations[id] = {
       id, kind, value, party, requestType, transports: [transport],
+      sources: value === 'analytics.vendor.test' ? ['page', 'worker'] : ['page'],
       ips: kind === 'host' && value === 'news.example'
         ? { '203.0.113.10': { value: '203.0.113.10', firstSeen: base, lastSeen: base, count: 1 } }
         : {},
@@ -383,6 +384,7 @@ function updateRowNode(li, row) {
     row.party,
     row.requestTypes.join(','),
     row.transports.join(','),
+    row.sources.join(','),
     row.foldedFrom || '',
     row.grouped
   ].join('|');
@@ -427,6 +429,17 @@ function updateRowNode(li, row) {
       mark.textContent = insecure.join(', ');
       mark.setAttribute('title', t('unencrypted'));
       sub.appendChild(mark);
+    }
+
+    // Traffic a site's service worker makes belongs to the site but not to this
+    // page, and the worker is shared by every tab of that site.
+    if (row.sources.includes('worker')) {
+      sub.appendChild(sep());
+      const worker = document.createElement('span');
+      worker.className = 'via-worker';
+      worker.textContent = t('viaServiceWorker');
+      worker.setAttribute('title', t('viaServiceWorkerHint'));
+      sub.appendChild(worker);
     }
 
     if (row.grouped > 1) {

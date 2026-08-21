@@ -75,6 +75,11 @@ session all still match. This is deliberate — do not "simplify" it, or a late 
 previous site lands under the new one. Each hostname retains **all** observed IPs with
 first/last/count.
 
+**Service-worker traffic:** Chrome reports `tabId -1` for a request a worker makes, including when it
+serves a fetch the page made — measured, not assumed. Such requests are attributed by `initiator`
+**origin** (never by `siteKey`, or one site's worker would land under another of its hosts) to every
+tab showing that origin, and dropped when no tab does.
+
 **Signal attribution:** a `FINGERPRINT` message is bound to a site by document ID when Chrome supplies
 one, otherwise by `sender.tab.url`; anything unattributable is dropped. The relay forwards only the
 signal name — never a value read in the page.

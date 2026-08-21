@@ -182,3 +182,35 @@ test('the registrable mode still groups hosts of one domain', () => {
   // A grouped row stands for several hosts, so naming one of them would misstate it.
   assert.deepEqual(rows.map((row) => row.foldedFrom), [null, null]);
 });
+
+test('a row states how the destination was reached', () => {
+  const state = {
+    pageHost: 'app.pwa.test',
+    destinations: {
+      'host|a.vendor.test': {
+        id: 'host|a.vendor.test', kind: 'host', value: 'a.vendor.test',
+        party: 'third', requestType: 'fetch', transports: ['https'], sources: ['page'],
+        ips: {}, firstSeen: 1, lastSeen: 1, count: 1
+      },
+      'host|b.vendor.test': {
+        id: 'host|b.vendor.test', kind: 'host', value: 'b.vendor.test',
+        party: 'third', requestType: 'fetch', transports: ['https'], sources: ['worker'],
+        ips: {}, firstSeen: 2, lastSeen: 2, count: 1
+      },
+      'host|c.vendor.test': {
+        id: 'host|c.vendor.test', kind: 'host', value: 'c.vendor.test',
+        party: 'third', requestType: 'fetch', transports: ['https'], sources: ['page', 'worker'],
+        ips: {}, firstSeen: 3, lastSeen: 3, count: 1
+      }
+    }
+  };
+
+  assert.deepEqual(
+    buildDestinationRows(state, { mode: 'exact' }).map((row) => row.sources),
+    [['page'], ['worker'], ['page', 'worker']]
+  );
+  assert.deepEqual(
+    buildDestinationRows(state, { mode: 'registrable' }).map((row) => row.sources),
+    [['page', 'worker']]
+  );
+});

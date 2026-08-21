@@ -42,10 +42,13 @@ function mapRequestType(type) {
   }
 }
 
-function isIgnorableRequest(tabId, parsed) {
-  return !Number.isInteger(tabId) ||
-    tabId < 0 ||
-    parsed.protocol === 'chrome-extension:';
+function isIgnorableRequest(parsed) {
+  return parsed.protocol === 'chrome-extension:';
+}
+
+function isPageOrigin(initiator) {
+  return typeof initiator === 'string' &&
+    (initiator.startsWith('https://') || initiator.startsWith('http://'));
 }
 
 function legacySignal(message) {
@@ -208,7 +211,14 @@ export function createBackgroundController(
     } catch (_error) {
       return;
     }
-    if (isIgnorableRequest(tabId, parsed)) return;
+    if (isIgnorableRequest(parsed)) return;
+
+    // A request a service worker makes names no tab, so it is attributed by the
+    // origin that owns the worker instead of being dropped.
+    if (!Number.isInteger(tabId) || tabId < 0) {
+      recordWorkerRequest(details, parsed);
+      return;
+    }
 
     const state = getOrCreate(tabId);
     if (type === 'main_frame') {
@@ -230,9 +240,8 @@ export function createBackgroundController(
     }
     if (typeof requestId === 'string') {
       requestSites.set(requestId, {
-        tabId,
-        siteKey: state.siteKey,
-        host: normalizeHostname(parsed.hostname)
+        host: normalizeHostname(parsed.hostname),
+        targets: [{ tabId, siteKey: state.siteKey }]
       });
     }
     if (state.paused) return;
@@ -241,8 +250,37 @@ export function createBackgroundController(
       value: parsed.hostname,
       party: classifyParty(parsed.hostname, state.pageHost),
       requestType: mapRequestType(type),
-      transport: transportFromUrl(parsed)
+      transport: transportFromUrl(parsed),
+      source: 'page'
     }, now()));
+  }
+
+  // A service worker belongs to one origin and is shared by every tab showing it,
+  // so the request is recorded for each of those tabs and for no other.
+  function recordWorkerRequest(details, parsed) {
+    const { initiator, requestId, type } = details;
+    if (!isPageOrigin(initiator)) return;
+
+    const targets = [];
+    for (const [tabId, state] of tabs) {
+      if (state.pageUrl === initiator) targets.push({ tabId, siteKey: state.siteKey });
+    }
+    if (targets.length === 0) return;
+
+    if (typeof requestId === 'string') {
+      requestSites.set(requestId, { host: normalizeHostname(parsed.hostname), targets });
+    }
+    for (const target of targets) {
+      const state = tabs.get(target.tabId);
+      if (!state || state.paused) continue;
+      commit(recordDestination(state, {
+        value: parsed.hostname,
+        party: classifyParty(parsed.hostname, state.pageHost),
+        requestType: mapRequestType(type),
+        transport: transportFromUrl(parsed),
+        source: 'worker'
+      }, now()));
+    }
   }
 
   // The tab's own URL is the only trustworthy statement about which site the user
@@ -276,7 +314,8 @@ export function createBackgroundController(
         value: host,
         party: classifyParty(host, state.pageHost),
         requestType: 'document',
-        transport: committed.transport
+        transport: committed.transport,
+        source: 'page'
       }, now());
       if (committed.ip) state = recordResolvedIp(state, host, committed.ip, now());
     }
@@ -308,7 +347,7 @@ export function createBackgroundController(
     } catch (_error) {
       return;
     }
-    if (isIgnorableRequest(tabId, parsed)) return;
+    if (isIgnorableRequest(parsed)) return;
     const requestSite = typeof requestId === 'string' ? requestSites.get(requestId) : null;
     if (typeof requestId === 'string') requestSites.delete(requestId);
     const pending = pendingNavigations.get(tabId);
@@ -316,15 +355,17 @@ export function createBackgroundController(
         pending.host === normalizeHostname(parsed.hostname)) {
       pending.ip = ip;
     }
-    if (!requestSite ||
-        requestSite.tabId !== tabId ||
-        requestSite.host !== normalizeHostname(parsed.hostname)) {
-      return;
+    if (!requestSite || requestSite.host !== normalizeHostname(parsed.hostname)) return;
+
+    // A response may only enrich the request it belongs to: same tab, same host and
+    // still the same site session. A worker response names no tab of its own.
+    for (const target of requestSite.targets) {
+      if (Number.isInteger(tabId) && tabId >= 0 && target.tabId !== tabId) continue;
+      const state = tabs.get(target.tabId);
+      if (!state || state.paused || state.siteKey !== target.siteKey) continue;
+      const next = recordResolvedIp(state, parsed.hostname, ip, now());
+      if (next !== state) commit(next);
     }
-    const state = tabs.get(tabId);
-    if (!state || state.paused || state.siteKey !== requestSite.siteKey) return;
-    const next = recordResolvedIp(state, parsed.hostname, ip, now());
-    if (next !== state) commit(next);
   }
 
   chromeApi.webRequest.onBeforeRequest.addListener(
@@ -453,7 +494,9 @@ export function createBackgroundController(
       pendingNavigations.delete(tabId);
       pendingDelivery.delete(tabId);
       for (const [requestId, requestSite] of requestSites) {
-        if (requestSite.tabId === tabId) requestSites.delete(requestId);
+        const remaining = requestSite.targets.filter((target) => target.tabId !== tabId);
+        if (remaining.length === 0) requestSites.delete(requestId);
+        else if (remaining.length !== requestSite.targets.length) requestSite.targets = remaining;
       }
       const ports = subscribers.get(tabId);
       if (ports) {

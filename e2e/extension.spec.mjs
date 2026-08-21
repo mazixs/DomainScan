@@ -82,6 +82,28 @@ test.beforeAll(async () => {
         </script>`);
       return;
     }
+    if (request.url === '/worker-sw.js') {
+      response.setHeader('Content-Type', 'text/javascript');
+      response.end(`
+        self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+        self.addEventListener('fetch', (event) => {
+          if (event.request.url.includes('/through-worker')) {
+            event.respondWith(fetch(${JSON.stringify(url('worker.vendor.test', '/asset'))}));
+          }
+        });`);
+      return;
+    }
+    if (request.url === '/worker-page') {
+      response.setHeader('Content-Type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html>
+        <title>worker</title>
+        <script>
+          navigator.serviceWorker.register('/worker-sw.js')
+            .then(() => navigator.serviceWorker.ready)
+            .then(() => { window.__swReady = true; });
+        </script>`);
+      return;
+    }
     if (request.url === '/deep') {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       response.end(`<!doctype html>
@@ -136,7 +158,7 @@ test.beforeAll(async () => {
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
       '--host-resolver-rules=MAP *.test 127.0.0.1, EXCLUDE localhost',
-      `--unsafely-treat-insecure-origin-as-secure=${url('signals.alpha.test')}`,
+      `--unsafely-treat-insecure-origin-as-secure=${url('signals.alpha.test')},${url('pwa.alpha.test')}`,
       '--no-proxy-server'
     ]
   });
@@ -392,6 +414,24 @@ test('the subdomain mode folds one label and names the host it folded from', asy
   // Domains mode still goes all the way to the registrable domain.
   await panel.locator('.seg-btn[data-mode="registrable"]').click();
   await expect(panel.locator('#list li.row .host').first()).toHaveText('alpha.test');
+  await page.close();
+  await panel.close();
+});
+
+test('a destination reached only through the site service worker is recorded', async () => {
+  const page = await context.newPage();
+  await page.goto(url('pwa.alpha.test', '/worker-page'));
+  await page.waitForFunction(() => window.__swReady === true, null, { timeout: 15000 });
+  await page.reload();
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null, null, { timeout: 15000 });
+  const panel = await openPanelFor(page);
+
+  // The page asks for its own path; only the worker's own request reaches the network.
+  await page.evaluate(() => fetch('/through-worker').then((r) => r.text()).catch(() => null));
+
+  const row = panel.locator('#list li.row').filter({ hasText: 'worker.vendor.test' });
+  await expect(row).toHaveCount(1);
+  await expect(row.locator('.via-worker')).toHaveAttribute('title', /service worker/i);
   await page.close();
   await panel.close();
 });

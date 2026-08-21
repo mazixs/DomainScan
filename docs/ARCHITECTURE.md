@@ -80,6 +80,7 @@ bounded backoff (250 ms up to 4 s) and binds the current active tab again.
       party: "first",
       requestType: "script",
       transports: ["https"],
+      sources: ["page"],
       ips: {
         "203.0.113.10": {
           value: "203.0.113.10",
@@ -118,10 +119,18 @@ migrated by `normalizeTabState`.
 
 ## Network observations
 
-`onBeforeRequest` records the destination and request category, and never changes the site. A request ID is correlated with
-the active site session. `onResponseStarted` may add its normalized IP only if the request ID,
-tab, hostname, and site session still match. This prevents a late response from the previous site
-being attached to a new site session.
+`onBeforeRequest` records the destination and request category, and never changes the site. A request
+ID is correlated with the site sessions it was made from. `onResponseStarted` may add its normalized
+IP only if the request ID, tab, hostname, and site session still match. This prevents a late response
+from the previous site being attached to a new site session.
+
+A request a service worker makes carries no tab: Chrome reports `tabId -1` even when the worker is
+serving a request the page made, so on a worker-backed site most traffic would otherwise be invisible.
+Such a request is attributed by its `initiator` **origin** — not its site — to every tab currently
+showing that exact origin, because a worker is scoped to an origin and shared by its tabs. Its row
+says so. A worker request whose origin no tab is showing (a push, a background sync, a closed tab) is
+dropped rather than guessed at, and browser-internal traffic without a page origin is ignored. Each
+destination keeps every way it was reached in `sources`.
 
 One hostname retains all unique IPs with first/last timestamps and counts, and every transport it
 was reached over.

@@ -78,7 +78,8 @@ export function recordDestination(state, observation, now = Date.now()) {
   const destination = existing
     ? {
         ...existing,
-        transports: withTransport(existing.transports, observation.transport),
+        transports: withObserved(existing.transports, observation.transport, TRANSPORTS, 'other'),
+        sources: withObserved(existing.sources, observation.source, SOURCES, 'page'),
         lastSeen: now,
         count: existing.count + 1
       }
@@ -88,7 +89,8 @@ export function recordDestination(state, observation, now = Date.now()) {
         value,
         party: observation.party,
         requestType: observation.requestType,
-        transports: withTransport([], observation.transport),
+        transports: withObserved([], observation.transport, TRANSPORTS, 'other'),
+        sources: withObserved([], observation.source, SOURCES, 'page'),
         ips: {},
         firstSeen: now,
         lastSeen: now,
@@ -106,16 +108,17 @@ export function recordDestination(state, observation, now = Date.now()) {
 }
 
 const TRANSPORTS = new Set(['https', 'http', 'wss', 'ws', 'other']);
+const SOURCES = new Set(['page', 'worker']);
 
 /**
- * One destination can be contacted over more than one transport, and which ones
- * were observed is a fact of its own: a host reached over plain http once stays
- * a host reached over plain http, whatever it is reached over later.
+ * One destination can be reached in more than one way, and each way observed is a
+ * fact of its own: a host reached over plain http once stays a host reached over
+ * plain http, and a host a service worker contacted stays that too.
  */
-function withTransport(transports, transport) {
-  const known = Array.isArray(transports) ? transports.filter((value) => TRANSPORTS.has(value)) : [];
-  const value = TRANSPORTS.has(transport) ? transport : 'other';
-  return known.includes(value) ? known : [...known, value];
+function withObserved(list, value, allowed, fallback) {
+  const known = Array.isArray(list) ? list.filter((entry) => allowed.has(entry)) : [];
+  const observed = allowed.has(value) ? value : fallback;
+  return known.includes(observed) ? known : [...known, observed];
 }
 
 export function recordResolvedIp(state, host, ip, now = Date.now()) {
@@ -270,15 +273,12 @@ function normalizeFingerprint(value, fallbackTime) {
   return { signals };
 }
 
-function normalizeTransports(candidate) {
-  const stored = Array.isArray(candidate.transports)
-    ? candidate.transports
-    : [candidate.transport];
-  const transports = [];
-  for (const value of stored) {
-    if (TRANSPORTS.has(value) && !transports.includes(value)) transports.push(value);
+function normalizeObserved(stored, allowed, fallback) {
+  const values = [];
+  for (const value of Array.isArray(stored) ? stored : [stored]) {
+    if (allowed.has(value) && !values.includes(value)) values.push(value);
   }
-  return transports.length > 0 ? transports : ['other'];
+  return values.length > 0 ? values : [fallback];
 }
 
 /** Coerce persisted or legacy data into the current TabState schema. */
@@ -304,7 +304,12 @@ export function normalizeTabState(value, now = Date.now()) {
       value,
       party: kind === 'ip' ? 'ip' : candidate.party || 'third',
       requestType: candidate.requestType || 'other',
-      transports: normalizeTransports(candidate),
+      transports: normalizeObserved(
+        Array.isArray(candidate.transports) ? candidate.transports : [candidate.transport],
+        TRANSPORTS,
+        'other'
+      ),
+      sources: normalizeObserved(candidate.sources, SOURCES, 'page'),
       ips: kind === 'host' ? normalizeIpHistory(candidate) : {},
       firstSeen: Number.isFinite(candidate.firstSeen) ? candidate.firstSeen : updatedAt,
       lastSeen: Number.isFinite(candidate.lastSeen) ? candidate.lastSeen : updatedAt,

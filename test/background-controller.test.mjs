@@ -745,3 +745,142 @@ test('accumulated evidence reaches the panel and storage without a forced flush'
     'the controller to deliver a captured destination on its own'
   );
 });
+
+test('a request made by the site service worker is attributed to the tab showing that site', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 71, 'https://app.pwa.test/');
+  await controller.flush();
+
+  // A service worker serving the page goes to the network itself: no tab is named.
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: -1,
+    url: 'https://api.vendor.test/data',
+    type: 'xmlhttprequest',
+    requestId: 'worker-request',
+    initiator: 'https://app.pwa.test'
+  });
+  chrome.webRequest.onResponseStarted.emit({
+    tabId: -1,
+    url: 'https://api.vendor.test/data',
+    ip: '203.0.113.44',
+    requestId: 'worker-request'
+  });
+  await controller.flush();
+
+  const destination = controller.getState(71).destinations['host|api.vendor.test'];
+  assert.ok(destination, 'the destination the service worker contacted is recorded');
+  assert.deepEqual(destination.sources, ['worker']);
+  assert.equal(destination.party, 'third');
+  assert.deepEqual(Object.keys(destination.ips), ['203.0.113.44']);
+});
+
+test('worker traffic reaches every tab showing that origin and no other', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 72, 'https://app.pwa.test/');
+  navigate(chrome, 73, 'https://app.pwa.test/inbox');
+  navigate(chrome, 74, 'https://blog.pwa.test/');
+  navigate(chrome, 75, 'https://other.test/');
+  await controller.flush();
+
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: -1,
+    url: 'https://api.vendor.test/data',
+    type: 'xmlhttprequest',
+    requestId: 'worker-fanout',
+    initiator: 'https://app.pwa.test'
+  });
+  await controller.flush();
+
+  assert.ok(controller.getState(72).destinations['host|api.vendor.test']);
+  assert.ok(controller.getState(73).destinations['host|api.vendor.test']);
+  // A service worker belongs to one origin: another host of the same site is not it.
+  assert.equal(controller.getState(74).destinations['host|api.vendor.test'], undefined);
+  assert.equal(controller.getState(75).destinations['host|api.vendor.test'], undefined);
+});
+
+test('worker traffic with no tab showing that origin is dropped', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: -1,
+    url: 'https://api.vendor.test/data',
+    type: 'xmlhttprequest',
+    requestId: 'orphan-worker',
+    initiator: 'https://closed.pwa.test'
+  });
+  await controller.flush();
+
+  assert.deepEqual(Object.keys(chrome.storageData), []);
+});
+
+test('a browser-internal request without a page origin is ignored', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 76, 'https://app.pwa.test/');
+  await controller.flush();
+
+  for (const initiator of [undefined, null, 'chrome-extension://abcdefghijklmnop', 'chrome://settings']) {
+    chrome.webRequest.onBeforeRequest.emit({
+      tabId: -1,
+      url: 'https://telemetry.browser.test/ping',
+      type: 'xmlhttprequest',
+      requestId: `internal-${String(initiator)}`,
+      initiator
+    });
+  }
+  await controller.flush();
+
+  assert.equal(controller.getState(76).destinations['host|telemetry.browser.test'], undefined);
+});
+
+test('a paused tab records no worker traffic', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 77 });
+  navigate(chrome, 77, 'https://app.pwa.test/');
+  port.receive({ type: MSG.SET_PAUSED, paused: true });
+  await controller.flush();
+
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: -1,
+    url: 'https://api.vendor.test/data',
+    type: 'xmlhttprequest',
+    requestId: 'paused-worker',
+    initiator: 'https://app.pwa.test'
+  });
+  await controller.flush();
+
+  assert.equal(controller.getState(77).destinations['host|api.vendor.test'], undefined);
+});
+
+test('a destination contacted both by the page and by its worker states both', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 78, 'https://app.pwa.test/');
+  request(chrome, 78, 'https://api.vendor.test/data');
+  await controller.flush();
+
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: -1,
+    url: 'https://api.vendor.test/data',
+    type: 'xmlhttprequest',
+    requestId: 'both-worker',
+    initiator: 'https://app.pwa.test'
+  });
+  await controller.flush();
+
+  const destination = controller.getState(78).destinations['host|api.vendor.test'];
+  assert.deepEqual(destination.sources, ['page', 'worker']);
+  assert.equal(destination.count, 2);
+});

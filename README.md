@@ -17,6 +17,8 @@ copying without turning ordinary requests into a threat score.
 - State survives Manifest V3 service-worker suspension through `chrome.storage.session`.
 - Every observed resolved IP is retained per hostname; direct-IP requests remain visible.
 - The full ICANN and PRIVATE Public Suffix List is bundled for registrable-domain decisions.
+- Requests made by a site's service worker are recorded for the tabs showing that origin and marked
+  as worker traffic.
 - Local page instrumentation reports exact access to selected browser-environment APIs.
 - English and Russian interfaces are included.
 
@@ -93,6 +95,9 @@ the host permissions already granted.
   extension does not know whether a permission prompt was approved or whether a returned value was
   useful to the page.
 - `chrome.storage.session` is browser-session storage. Closing a tab removes its DomainScan state.
+- A service worker request is only attributable while a tab shows its origin. What a worker does with
+  no such tab open — a push, a background sync — is not recorded, because there is no tab to record it
+  for.
 - Page instrumentation reports native sources, keeps native function shape, and strips its own
   frames from errors, so ordinary tampering checks do not see it. No in-page instrumentation can be
   proven invisible to every check, so a site behind aggressive bot protection can still react to it.

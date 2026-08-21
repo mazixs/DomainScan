@@ -45,6 +45,7 @@ export function buildDestinationRows(state, { mode = 'exact', query = '' } = {})
       existing.ips = unique([...existing.ips, ...ips]);
       existing.requestTypes = unique([...existing.requestTypes, destination.requestType]);
       existing.transports = unique([...existing.transports, ...(destination.transports || [])]);
+      existing.sources = unique([...existing.sources, ...(destination.sources || [])]);
       if (destination.party === 'third') existing.party = 'third';
       continue;
     }
@@ -60,6 +61,7 @@ export function buildDestinationRows(state, { mode = 'exact', query = '' } = {})
       requestType: destination.requestType,
       requestTypes: [destination.requestType],
       transports: unique(destination.transports || []),
+      sources: unique(destination.sources || []),
       grouped: 1,
       ips
     };

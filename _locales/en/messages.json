@@ -22,6 +22,9 @@
 
   "foldedFrom": { "message": "from" },
 
+  "viaServiceWorker": { "message": "via service worker" },
+  "viaServiceWorkerHint": { "message": "Requested by the site's service worker, which every tab of this site shares — not by this page." },
+
   "showingDestinations": {
     "message": "Showing $count$ destinations",
     "placeholders": { "count": { "content": "$1", "example": "7" } }

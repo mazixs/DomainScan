@@ -21,6 +21,8 @@ export const FALLBACK_EN = {
   recordingSince: 'Record kept since $TIME$',
   unencrypted: 'Contacted without encryption',
   foldedFrom: 'from',
+  viaServiceWorker: 'via service worker',
+  viaServiceWorkerHint: "Requested by the site's service worker, which every tab of this site shares — not by this page.",
 
   fingerprintTitle: 'Possible fingerprinting',
   fingerprintTag: 'Heuristic',
