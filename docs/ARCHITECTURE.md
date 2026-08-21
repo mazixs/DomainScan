@@ -78,7 +78,7 @@ bounded backoff (250 ms up to 4 s) and binds the current active tab again.
       kind: "host",
       value: "cdn.example.co.uk",
       party: "first",
-      requestType: "script",
+      requestTypes: ["script"],
       transports: ["https"],
       sources: ["page"],
       ips: {

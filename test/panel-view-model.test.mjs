@@ -15,7 +15,7 @@ function stateWithDestinations() {
         kind: 'host',
         value: 'cdn.news.example.co.uk',
         party: 'first',
-        requestType: 'script',
+        requestTypes: ['script'],
         firstSeen: 1,
         ips: {
           '203.0.113.10': { value: '203.0.113.10' },
@@ -27,7 +27,7 @@ function stateWithDestinations() {
         kind: 'host',
         value: 'img.news.example.co.uk',
         party: 'first',
-        requestType: 'image',
+        requestTypes: ['image'],
         firstSeen: 2,
         ips: {
           '203.0.113.10': { value: '203.0.113.10' },
@@ -39,7 +39,7 @@ function stateWithDestinations() {
         kind: 'ip',
         value: '192.0.2.4',
         party: 'ip',
-        requestType: 'fetch',
+        requestTypes: ['fetch'],
         firstSeen: 3,
         ips: {}
       }
@@ -92,12 +92,12 @@ test('a row carries the transports of the destination it stands for', () => {
     destinations: {
       'host|a.news.example': {
         id: 'host|a.news.example', kind: 'host', value: 'a.news.example',
-        party: 'first', requestType: 'script', transports: ['https'],
+        party: 'first', requestTypes: ['script'], transports: ['https'],
         ips: {}, firstSeen: 1, lastSeen: 1, count: 1
       },
       'host|b.news.example': {
         id: 'host|b.news.example', kind: 'host', value: 'b.news.example',
-        party: 'first', requestType: 'image', transports: ['http', 'https'],
+        party: 'first', requestTypes: ['image'], transports: ['http', 'https'],
         ips: {}, firstSeen: 2, lastSeen: 2, count: 1
       }
     }
@@ -115,22 +115,22 @@ const FOLDING_STATE = {
   destinations: {
     'host|img.deep.news.example': {
       id: 'host|img.deep.news.example', kind: 'host', value: 'img.deep.news.example',
-      party: 'first', requestType: 'image', transports: ['https'],
+      party: 'first', requestTypes: ['image'], transports: ['https'],
       ips: {}, firstSeen: 1, lastSeen: 1, count: 1
     },
     'host|js.deep.news.example': {
       id: 'host|js.deep.news.example', kind: 'host', value: 'js.deep.news.example',
-      party: 'first', requestType: 'script', transports: ['https'],
+      party: 'first', requestTypes: ['script'], transports: ['https'],
       ips: {}, firstSeen: 2, lastSeen: 2, count: 1
     },
     'host|news.example': {
       id: 'host|news.example', kind: 'host', value: 'news.example',
-      party: 'first', requestType: 'document', transports: ['https'],
+      party: 'first', requestTypes: ['document'], transports: ['https'],
       ips: {}, firstSeen: 3, lastSeen: 3, count: 1
     },
     'ip|203.0.113.42': {
       id: 'ip|203.0.113.42', kind: 'ip', value: '203.0.113.42',
-      party: 'ip', requestType: 'other', transports: ['https'],
+      party: 'ip', requestTypes: ['other'], transports: ['https'],
       ips: {}, firstSeen: 4, lastSeen: 4, count: 1
     }
   }
@@ -189,17 +189,17 @@ test('a row states how the destination was reached', () => {
     destinations: {
       'host|a.vendor.test': {
         id: 'host|a.vendor.test', kind: 'host', value: 'a.vendor.test',
-        party: 'third', requestType: 'fetch', transports: ['https'], sources: ['page'],
+        party: 'third', requestTypes: ['fetch'], transports: ['https'], sources: ['page'],
         ips: {}, firstSeen: 1, lastSeen: 1, count: 1
       },
       'host|b.vendor.test': {
         id: 'host|b.vendor.test', kind: 'host', value: 'b.vendor.test',
-        party: 'third', requestType: 'fetch', transports: ['https'], sources: ['worker'],
+        party: 'third', requestTypes: ['fetch'], transports: ['https'], sources: ['worker'],
         ips: {}, firstSeen: 2, lastSeen: 2, count: 1
       },
       'host|c.vendor.test': {
         id: 'host|c.vendor.test', kind: 'host', value: 'c.vendor.test',
-        party: 'third', requestType: 'fetch', transports: ['https'], sources: ['page', 'worker'],
+        party: 'third', requestTypes: ['fetch'], transports: ['https'], sources: ['page', 'worker'],
         ips: {}, firstSeen: 3, lastSeen: 3, count: 1
       }
     }
@@ -212,5 +212,23 @@ test('a row states how the destination was reached', () => {
   assert.deepEqual(
     buildDestinationRows(state, { mode: 'registrable' }).map((row) => row.sources),
     [['page', 'worker']]
+  );
+});
+
+test('a row exposes every category the destination was seen as', () => {
+  const state = {
+    pageHost: 'news.example',
+    destinations: {
+      'host|cdn.news.example': {
+        id: 'host|cdn.news.example', kind: 'host', value: 'cdn.news.example',
+        party: 'first', requestTypes: ['image', 'document'], transports: ['https'], sources: ['page'],
+        ips: {}, firstSeen: 1, lastSeen: 1, count: 2
+      }
+    }
+  };
+
+  assert.deepEqual(
+    buildDestinationRows(state, { mode: 'exact' })[0].requestTypes,
+    ['image', 'document']
   );
 });

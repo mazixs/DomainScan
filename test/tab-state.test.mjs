@@ -297,3 +297,46 @@ test('a persisted destination keeps the transport it was stored with', () => {
 
   assert.deepEqual(state.destinations['host|cdn.example.com'].transports, ['http']);
 });
+
+test('a destination keeps every request category it was seen as', () => {
+  let state = makeTabState(1, 1000);
+  state = recordDestination(state, {
+    value: 'cdn.example.com',
+    party: 'third',
+    requestType: 'image',
+    transport: 'https'
+  }, 1000);
+  state = recordDestination(state, {
+    value: 'cdn.example.com',
+    party: 'third',
+    requestType: 'document',
+    transport: 'https'
+  }, 2000);
+  state = recordDestination(state, {
+    value: 'cdn.example.com',
+    party: 'third',
+    requestType: 'image',
+    transport: 'https'
+  }, 3000);
+
+  assert.deepEqual(state.destinations['host|cdn.example.com'].requestTypes, ['image', 'document']);
+});
+
+test('a persisted destination keeps the category it was stored with', () => {
+  const state = normalizeTabState({
+    tabId: 4,
+    pageHost: 'news.example',
+    destinations: {
+      'host|cdn.example.com': {
+        id: 'host|cdn.example.com', kind: 'host', value: 'cdn.example.com',
+        party: 'third', requestType: 'beacon', transports: ['https'],
+        ips: {}, firstSeen: 10, lastSeen: 10, count: 1
+      }
+    },
+    fingerprint: { signals: {} },
+    paused: false,
+    updatedAt: 10
+  }, 9000);
+
+  assert.deepEqual(state.destinations['host|cdn.example.com'].requestTypes, ['beacon']);
+});

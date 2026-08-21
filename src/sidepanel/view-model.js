@@ -43,7 +43,7 @@ export function buildDestinationRows(state, { mode = 'exact', query = '' } = {})
     if (existing) {
       existing.grouped += 1;
       existing.ips = unique([...existing.ips, ...ips]);
-      existing.requestTypes = unique([...existing.requestTypes, destination.requestType]);
+      existing.requestTypes = unique([...existing.requestTypes, ...(destination.requestTypes || [])]);
       existing.transports = unique([...existing.transports, ...(destination.transports || [])]);
       existing.sources = unique([...existing.sources, ...(destination.sources || [])]);
       if (destination.party === 'third') existing.party = 'third';
@@ -58,8 +58,7 @@ export function buildDestinationRows(state, { mode = 'exact', query = '' } = {})
       foldedFrom: mode === 'collapse' && display !== destination.value ? destination.value : null,
       kind: destination.kind,
       party: destination.party,
-      requestType: destination.requestType,
-      requestTypes: [destination.requestType],
+      requestTypes: unique(destination.requestTypes || []),
       transports: unique(destination.transports || []),
       sources: unique(destination.sources || []),
       grouped: 1,

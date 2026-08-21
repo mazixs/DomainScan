@@ -78,6 +78,7 @@ export function recordDestination(state, observation, now = Date.now()) {
   const destination = existing
     ? {
         ...existing,
+        requestTypes: withObserved(existing.requestTypes, observation.requestType, REQUEST_TYPES, 'other'),
         transports: withObserved(existing.transports, observation.transport, TRANSPORTS, 'other'),
         sources: withObserved(existing.sources, observation.source, SOURCES, 'page'),
         lastSeen: now,
@@ -88,7 +89,7 @@ export function recordDestination(state, observation, now = Date.now()) {
         kind,
         value,
         party: observation.party,
-        requestType: observation.requestType,
+        requestTypes: withObserved([], observation.requestType, REQUEST_TYPES, 'other'),
         transports: withObserved([], observation.transport, TRANSPORTS, 'other'),
         sources: withObserved([], observation.source, SOURCES, 'page'),
         ips: {},
@@ -109,6 +110,10 @@ export function recordDestination(state, observation, now = Date.now()) {
 
 const TRANSPORTS = new Set(['https', 'http', 'wss', 'ws', 'other']);
 const SOURCES = new Set(['page', 'worker']);
+const REQUEST_TYPES = new Set([
+  'document', 'image', 'script', 'style', 'fetch',
+  'beacon', 'media', 'font', 'websocket', 'other'
+]);
 
 /**
  * One destination can be reached in more than one way, and each way observed is a
@@ -303,7 +308,11 @@ export function normalizeTabState(value, now = Date.now()) {
       kind,
       value,
       party: kind === 'ip' ? 'ip' : candidate.party || 'third',
-      requestType: candidate.requestType || 'other',
+      requestTypes: normalizeObserved(
+        Array.isArray(candidate.requestTypes) ? candidate.requestTypes : [candidate.requestType],
+        REQUEST_TYPES,
+        'other'
+      ),
       transports: normalizeObserved(
         Array.isArray(candidate.transports) ? candidate.transports : [candidate.transport],
         TRANSPORTS,

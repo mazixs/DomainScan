@@ -127,7 +127,7 @@ function sampleState() {
   defs.forEach(([kind, value, party, requestType, transport], i) => {
     const id = kind + '|' + value;
     destinations[id] = {
-      id, kind, value, party, requestType, transports: [transport],
+      id, kind, value, party, requestTypes: [requestType], transports: [transport],
       sources: value === 'analytics.vendor.test' ? ['page', 'worker'] : ['page'],
       ips: kind === 'host' && value === 'news.example'
         ? { '203.0.113.10': { value: '203.0.113.10', firstSeen: base, lastSeen: base, count: 1 } }
@@ -165,7 +165,8 @@ function destinationCount() {
 /**
  * Rows for the current view (mode + search). Modes transform the VIEW only —
  * nothing in state.destinations is mutated or removed.
- * @returns {{key:string, display:string, kind:string, party:string, requestType:string, grouped:number}[]}
+ * @returns {{key:string, display:string, kind:string, party:string, requestTypes:string[],
+ *   transports:string[], sources:string[], foldedFrom:?string, ips:string[], grouped:number}[]}
  */
 function buildRows() {
   return buildDestinationRows(state, { mode: ui.mode, query: ui.query });
