@@ -50,7 +50,10 @@ changing anything shared):
 3. **`src/content/`** — `fingerprint-probe.js` runs in the MAIN world and preserves original
    method/getter behavior; `fingerprint-relay.js` runs in the ISOLATED world, registers first, and
    accepts exactly one synchronous `MessageChannel` at `document_start`. Only canonical signal *names*
-   cross the boundary — never returned values.
+   cross the boundary — never returned values. **The probe is registered at runtime** via
+   `chrome.scripting` (`PROBE_SCRIPT_ID`), never in the manifest: moving it back would remove the
+   per-site off switch that exists because no in-page instrumentation is provably invisible.
+   `validate.mjs` checks the file and the `scripting` permission.
 4. **`src/sidepanel/`** — `connection.js` (long-lived port, `HELLO` rebind on tab activation, bounded
    reconnect backoff), `view-model.js` (pure row derivation from `TabState`), `panel.js` (rendering,
    selection, copy, demo mode). `renderList` **reconciles by `row.key`** — never clear and rebuild the

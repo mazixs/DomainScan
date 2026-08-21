@@ -19,7 +19,8 @@ copying without turning ordinary requests into a threat score.
 - The full ICANN and PRIVATE Public Suffix List is bundled for registrable-domain decisions.
 - Requests made by a site's service worker are recorded for the tabs showing that origin and marked
   as worker traffic.
-- Local page instrumentation reports exact access to selected browser-environment APIs.
+- Local page instrumentation reports exact access to selected browser-environment APIs, and can be
+  switched off for one site or for all of them when a site reacts badly to being instrumented.
 - English and Russian interfaces are included.
 
 DomainScan does not call GeoIP, analytics, telemetry, or other external services. It observes
@@ -78,6 +79,8 @@ and remaining platform limitations are in `output/technical-audit.md`.
 - `webRequest`: observes request and response metadata without blocking or modifying traffic.
 - `storage`: preserves per-tab state across service-worker suspension.
 - `sidePanel`: provides the persistent browser interface.
+- `scripting`: registers the MAIN-world probe at runtime, which is what allows switching page
+  instrumentation off per site or entirely. No new page access is granted by it.
 - `<all_urls>` host access: required to observe arbitrary request destinations and instrument the
   selected local APIs on pages and frames.
 
@@ -100,4 +103,6 @@ the host permissions already granted.
   for.
 - Page instrumentation reports native sources, keeps native function shape, and strips its own
   frames from errors, so ordinary tampering checks do not see it. No in-page instrumentation can be
-  proven invisible to every check, so a site behind aggressive bot protection can still react to it.
+  proven invisible to every check, so a site behind aggressive bot protection can still react to it —
+  that is what the per-site switch is for. A page already open keeps whatever instrumentation it was
+  loaded with until it is reloaded.

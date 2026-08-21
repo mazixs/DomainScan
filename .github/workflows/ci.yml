@@ -107,6 +107,7 @@ jobs:
             THIRD_PARTY_NOTICES.md
             third_party/publicsuffix/LICENSE
             third_party/publicsuffix/public_suffix_list.dat
+            src/content/fingerprint-probe.js
           )
           for required_file in "${required_files[@]}"; do
             if [[ ! -f "${stage}/${required_file}" ]]; then

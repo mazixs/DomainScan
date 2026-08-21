@@ -1,4 +1,11 @@
-import { PORT_NAME, MSG, STORAGE_PREFIX, tabKey } from '../common/messages.js';
+import {
+  PORT_NAME,
+  MSG,
+  PROBE_SCRIPT_ID,
+  SETTINGS_KEY,
+  STORAGE_PREFIX,
+  tabKey
+} from '../common/messages.js';
 import {
   classifyParty,
   isIpLiteral,
@@ -62,6 +69,32 @@ function legacySignal(message) {
 
 const DELIVERY_INTERVAL_MS = 100;
 
+const PROBE_SCRIPT = Object.freeze({
+  id: PROBE_SCRIPT_ID,
+  js: ['src/content/fingerprint-probe.js'],
+  matches: ['<all_urls>'],
+  runAt: 'document_start',
+  allFrames: true,
+  world: 'MAIN',
+  persistAcrossSessions: true
+});
+
+const DEFAULT_SETTINGS = Object.freeze({ observePageApis: true, excludedSites: [] });
+
+function normalizeSettings(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const sites = Array.isArray(source.excludedSites) ? source.excludedSites : [];
+  return {
+    observePageApis: source.observePageApis !== false,
+    excludedSites: [...new Set(sites.filter((site) => typeof site === 'string' && site))]
+  };
+}
+
+/** Match patterns that keep the probe out of one site, subdomains included. */
+function excludePatterns(sites) {
+  return sites.flatMap((site) => [`*://${site}/*`, `*://*.${site}/*`]);
+}
+
 export function createBackgroundController(
   chromeApi,
   { now = () => Date.now(), logger = console } = {}
@@ -75,6 +108,7 @@ export function createBackgroundController(
   const pendingNavigations = new Map();
   const pendingDelivery = new Set();
   let deliveryTimer = null;
+  let settings = { ...DEFAULT_SETTINGS };
 
   function diagnose(operation, error, tabId) {
     try {
@@ -96,10 +130,56 @@ export function createBackgroundController(
       }
     })
     .catch((error) => diagnose('storage.session.get', error))
+    // The choice about page instrumentation has to be in force before the first
+    // page of the session is instrumented, so it is loaded and applied first.
+    .then(() => loadSettings())
+    .catch((error) => diagnose('storage.local.get', error))
+    .then(() => syncProbeRegistration())
+    .catch((error) => diagnose('scripting.register', error))
     // Requests observed before the first navigation of a session have no site to
     // belong to, so every open tab is seeded from the browser's own committed URL.
     .then(() => seedOpenTabs())
     .catch((error) => diagnose('tabs.query', error));
+
+  async function loadSettings() {
+    if (!chromeApi.storage.local) return;
+    const stored = await chromeApi.storage.local.get(SETTINGS_KEY);
+    settings = normalizeSettings(stored && stored[SETTINGS_KEY]);
+  }
+
+  async function saveSettings() {
+    if (!chromeApi.storage.local) return;
+    await chromeApi.storage.local.set({ [SETTINGS_KEY]: settings });
+  }
+
+  // The MAIN-world probe is registered dynamically so it can be switched off for one
+  // site or for all of them. Chrome keeps a registered script across restarts, so a
+  // page is never instrumented before the choice is known.
+  async function syncProbeRegistration() {
+    const scripting = chromeApi.scripting;
+    if (!scripting || typeof scripting.getRegisteredContentScripts !== 'function') return;
+    const registered = await scripting.getRegisteredContentScripts({ ids: [PROBE_SCRIPT_ID] });
+    if (!settings.observePageApis) {
+      if (registered.length > 0) await scripting.unregisterContentScripts({ ids: [PROBE_SCRIPT_ID] });
+      return;
+    }
+    const script = { ...PROBE_SCRIPT, excludeMatches: excludePatterns(settings.excludedSites) };
+    if (registered.length > 0) await scripting.updateContentScripts([script]);
+    else await scripting.registerContentScripts([script]);
+  }
+
+  // The panel is told only after the change is actually in force, so it never claims
+  // a page is unwatched while the probe is still registered.
+  async function applySettings(next) {
+    settings = normalizeSettings(next);
+    await syncProbeRegistration().catch((error) => diagnose('scripting.update', error));
+    await saveSettings().catch((error) => diagnose('storage.local.set', error));
+    for (const tabId of subscribers.keys()) deliver(tabId);
+  }
+
+  function isExcludedSite(siteKey) {
+    return !!siteKey && settings.excludedSites.includes(siteKey);
+  }
 
   async function seedOpenTabs() {
     if (!chromeApi.tabs || typeof chromeApi.tabs.query !== 'function') return;
@@ -141,7 +221,7 @@ export function createBackgroundController(
     if (!state) return;
     for (const port of subscribers.get(tabId) || []) {
       try {
-        port.postMessage({ type: MSG.STATE, state });
+        port.postMessage({ type: MSG.STATE, state, settings });
       } catch (error) {
         diagnose('port.postMessage', error, tabId);
       }
@@ -199,7 +279,7 @@ export function createBackgroundController(
       subscribers.set(tabId, ports);
     }
     ports.add(port);
-    port.postMessage({ type: MSG.STATE, state: getOrCreate(tabId) });
+    port.postMessage({ type: MSG.STATE, state: getOrCreate(tabId), settings });
   }
 
   function onBeforeRequest(details) {
@@ -403,11 +483,22 @@ export function createBackgroundController(
           return;
         }
 
+        if (message.type === MSG.SET_OBSERVE_PAGE_APIS) {
+          return applySettings({ ...settings, observePageApis: !!message.enabled });
+        }
+
         const tabId = portBindings.get(port);
         if (tabId == null) return;
         const state = getOrCreate(tabId);
         if (message.type === MSG.SET_PAUSED) {
           commit({ ...state, paused: !!message.paused, updatedAt: now() }, { immediate: true });
+        } else if (message.type === MSG.SET_SITE_OBSERVED) {
+          const siteKey = state.siteKey;
+          if (!siteKey) return;
+          const excludedSites = message.observed
+            ? settings.excludedSites.filter((site) => site !== siteKey)
+            : [...settings.excludedSites, siteKey];
+          return applySettings({ ...settings, excludedSites });
         } else if (message.type === MSG.CLEAR) {
           commit({
             ...state,
@@ -429,6 +520,7 @@ export function createBackgroundController(
       if (!Number.isInteger(tabId) || tabId < 0) return;
       const state = getOrCreate(tabId);
       if (state.paused) return;
+      if (!settings.observePageApis || isExcludedSite(state.siteKey)) return;
       // A bfcached, prerendered or dying document is not what the tab shows now.
       if (typeof sender.documentLifecycle === 'string' && sender.documentLifecycle !== 'active') return;
       const documents = currentDocuments.get(tabId);

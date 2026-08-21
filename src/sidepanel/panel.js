@@ -23,6 +23,9 @@ let connection = null;
 // Current TabState we render from (null until first STATE in live mode).
 let state = null;
 
+// What the extension is currently allowed to observe in pages. Sent with every STATE.
+let settings = { observePageApis: true, excludedSites: [] };
+
 // UI-local state (never sent to the background).
 const ui = {
   mode: 'exact',        // 'exact' | 'collapse' | 'registrable'
@@ -42,6 +45,8 @@ const el = {
   settingsLabel: document.getElementById('settings-label'),
   settingsMenu: document.getElementById('settings-menu'),
   togglePause: document.getElementById('toggle-pause'),
+  toggleApis: document.getElementById('toggle-apis'),
+  toggleSite: document.getElementById('toggle-site'),
   clearBtn: document.getElementById('clear-btn'),
   eyebrow: document.getElementById('eyebrow'),
   siteHost: document.getElementById('site-host'),
@@ -194,6 +199,7 @@ function renderHeader() {
   el.togglePause.textContent = paused ? t('resumeCapture') : t('pauseCapture');
   el.togglePause.disabled = disconnected;
   el.clearBtn.disabled = disconnected;
+  renderWatchMenu(disconnected);
 
   el.siteHost.textContent = (state && state.pageHost) || '';
 
@@ -223,11 +229,38 @@ function formatTime(timestamp) {
   }
 }
 
+// Watching page APIs can be switched off entirely, or for the site in view, because
+// no in-page instrumentation is provably invisible to every bot protection.
+function renderWatchMenu(disconnected) {
+  const watching = settings.observePageApis;
+  const siteKey = state && state.siteKey;
+  const siteWatched = watching && !settings.excludedSites.includes(siteKey);
+
+  el.toggleApis.textContent = watching ? t('watchApisStop') : t('watchApisStart');
+  el.toggleApis.disabled = disconnected;
+  el.toggleSite.textContent = siteWatched ? t('watchSiteStop') : t('watchSiteStart');
+  el.toggleSite.disabled = disconnected || !watching || !siteKey;
+}
+
 function renderFingerprint() {
   const signals = state && state.fingerprint && state.fingerprint.signals;
   const summary = summarizeFingerprint(signals);
+  const siteKey = state && state.siteKey;
+  const watching = settings.observePageApis && !settings.excludedSites.includes(siteKey);
+
+  if (!watching && summary.observed.length === 0) {
+    el.fpNote.hidden = false;
+    el.fpTitle.textContent = t('apiWatchOff');
+    el.fpTag.hidden = true;
+    el.fpBody.hidden = true;
+    el.signalList.textContent = '';
+    return;
+  }
+
   el.fpNote.hidden = summary.observed.length === 0;
   if (summary.observed.length === 0) return;
+  el.fpTag.hidden = false;
+  el.fpBody.hidden = false;
 
   if (summary.possibleFingerprinting) {
     el.fpTitle.textContent = t('fingerprintTitle');
@@ -606,6 +639,29 @@ function setPaused(paused) {
   }
 }
 
+function setObservePageApis(enabled) {
+  if (IS_DEMO) {
+    settings = { ...settings, observePageApis: enabled };
+    render();
+  } else if (connection) {
+    connection.post({ type: MSG.SET_OBSERVE_PAGE_APIS, enabled });
+  }
+}
+
+function setSiteObserved(observed) {
+  const siteKey = state && state.siteKey;
+  if (!siteKey) return;
+  if (IS_DEMO) {
+    const excludedSites = observed
+      ? settings.excludedSites.filter((site) => site !== siteKey)
+      : [...settings.excludedSites, siteKey];
+    settings = { ...settings, excludedSites };
+    render();
+  } else if (connection) {
+    connection.post({ type: MSG.SET_SITE_OBSERVED, observed });
+  }
+}
+
 function clearTab() {
   ui.selected = Object.create(null);
   if (IS_DEMO) {
@@ -695,6 +751,15 @@ function wireEvents() {
     setPaused(!(state && state.paused));
     closeMenu(true);
   });
+  el.toggleApis.addEventListener('click', () => {
+    setObservePageApis(!settings.observePageApis);
+    closeMenu(true);
+  });
+  el.toggleSite.addEventListener('click', () => {
+    const siteKey = state && state.siteKey;
+    setSiteObserved(settings.excludedSites.includes(siteKey));
+    closeMenu(true);
+  });
   el.clearBtn.addEventListener('click', () => {
     clearTab();
     closeMenu(true);
@@ -727,11 +792,17 @@ function wireEvents() {
 function connectLive() {
   connection = createPanelConnection({
     chromeApi: chrome,
-    onState(nextState) {
+    onState(nextState, nextSettings) {
       if (!state || state.tabId !== nextState.tabId || state.siteKey !== nextState.siteKey) {
         ui.selected = Object.create(null);
       }
       state = nextState;
+      if (nextSettings) {
+        settings = {
+          observePageApis: nextSettings.observePageApis !== false,
+          excludedSites: Array.isArray(nextSettings.excludedSites) ? nextSettings.excludedSites : []
+        };
+      }
       render();
     },
     onConnectionChange(status) {

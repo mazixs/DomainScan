@@ -25,6 +25,12 @@
   "viaServiceWorker": { "message": "через service worker" },
   "viaServiceWorkerHint": { "message": "Запрос сделал service worker сайта, общий для всех его вкладок, а не эта страница." },
 
+  "watchApisStop": { "message": "Не отслеживать обращения к API" },
+  "watchApisStart": { "message": "Отслеживать обращения к API" },
+  "watchSiteStop": { "message": "Не отслеживать на этом сайте" },
+  "watchSiteStart": { "message": "Отслеживать на этом сайте" },
+  "apiWatchOff": { "message": "Обращения к API браузера не отслеживаются." },
+
   "showingDestinations": {
     "message": "Показано адресов: $count$",
     "placeholders": { "count": { "content": "$1", "example": "7" } }

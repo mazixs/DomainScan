@@ -25,6 +25,12 @@
   "viaServiceWorker": { "message": "via service worker" },
   "viaServiceWorkerHint": { "message": "Requested by the site's service worker, which every tab of this site shares — not by this page." },
 
+  "watchApisStop": { "message": "Stop watching browser API use" },
+  "watchApisStart": { "message": "Watch browser API use" },
+  "watchSiteStop": { "message": "Stop watching on this site" },
+  "watchSiteStart": { "message": "Watch on this site" },
+  "apiWatchOff": { "message": "Browser API use is not being watched." },
+
   "showingDestinations": {
     "message": "Showing $count$ destinations",
     "placeholders": { "count": { "content": "$1", "example": "7" } }

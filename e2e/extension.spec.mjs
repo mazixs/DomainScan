@@ -435,3 +435,36 @@ test('a destination reached only through the site service worker is recorded', a
   await page.close();
   await panel.close();
 });
+
+test('watching page API use can be switched off and back on', async () => {
+  const page = await context.newPage();
+  await page.goto(url('watch.alpha.test'));
+  const panel = await openPanelFor(page);
+
+  await panel.locator('#settings-btn').click();
+  await panel.locator('#toggle-apis').click();
+  // The panel states the change only once the probe is really gone.
+  await expect(panel.locator('#fp-note')).toBeVisible();
+  await panel.close();
+
+  const unwatched = await context.newPage();
+  await unwatched.goto(url('signals.alpha.test', '/signals'));
+  expect(await unwatched.evaluate(
+    () => Function.prototype.toString.call(Date.prototype.getTimezoneOffset).includes('[native code]')
+  )).toBe(true);
+  const unwatchedPanel = await openPanelFor(unwatched);
+  await expect(unwatchedPanel.locator('#signal-list > li')).toHaveCount(0);
+
+  await unwatchedPanel.locator('#settings-btn').click();
+  await unwatchedPanel.locator('#toggle-apis').click();
+  await unwatchedPanel.close();
+  await unwatched.close();
+
+  const watched = await context.newPage();
+  await watched.goto(url('signals.alpha.test', '/signals'));
+  const watchedPanel = await openPanelFor(watched);
+  await expect(watchedPanel.locator('#signal-list > li')).toHaveCount(7);
+  await watchedPanel.close();
+  await watched.close();
+  await page.close();
+});

@@ -34,12 +34,34 @@ function fakePort(name = PORT_NAME) {
   };
 }
 
-function fakeChrome(initialStorage = {}) {
+function fakeChrome(initialStorage = {}, initialLocal = {}) {
   const storage = structuredClone(initialStorage);
+  const local = structuredClone(initialLocal);
   const counters = { writes: 0 };
+  const scriptingCalls = [];
+  let registeredScripts = [];
   return {
     storageData: storage,
+    localData: local,
     counters,
+    scriptingCalls,
+    scripting: {
+      async getRegisteredContentScripts() {
+        return structuredClone(registeredScripts);
+      },
+      async registerContentScripts(scripts) {
+        scriptingCalls.push({ call: 'register', scripts: structuredClone(scripts) });
+        registeredScripts = [...registeredScripts, ...structuredClone(scripts)];
+      },
+      async updateContentScripts(scripts) {
+        scriptingCalls.push({ call: 'update', scripts: structuredClone(scripts) });
+        registeredScripts = structuredClone(scripts);
+      },
+      async unregisterContentScripts({ ids }) {
+        scriptingCalls.push({ call: 'unregister', ids: structuredClone(ids) });
+        registeredScripts = registeredScripts.filter((script) => !ids.includes(script.id));
+      }
+    },
     webRequest: {
       onBeforeRequest: fakeEvent(),
       onResponseStarted: fakeEvent(),
@@ -67,6 +89,14 @@ function fakeChrome(initialStorage = {}) {
       }
     },
     storage: {
+      local: {
+        async get() {
+          return structuredClone(local);
+        },
+        async set(values) {
+          Object.assign(local, structuredClone(values));
+        }
+      },
       session: {
         async get() {
           return structuredClone(storage);
@@ -883,4 +913,117 @@ test('a destination contacted both by the page and by its worker states both', a
   const destination = controller.getState(78).destinations['host|api.vendor.test'];
   assert.deepEqual(destination.sources, ['page', 'worker']);
   assert.equal(destination.count, 2);
+});
+
+function lastMessage(port, type) {
+  return port.sent.filter((message) => message.type === type).at(-1);
+}
+
+test('page instrumentation is registered on start and reported to the panel', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 81 });
+  await controller.flush();
+
+  const registered = chrome.scriptingCalls.filter((entry) => entry.call === 'register');
+  assert.equal(registered.length, 1);
+  assert.deepEqual(registered[0].scripts[0].js, ['src/content/fingerprint-probe.js']);
+  assert.equal(registered[0].scripts[0].world, 'MAIN');
+  assert.equal(registered[0].scripts[0].runAt, 'document_start');
+  assert.deepEqual(registered[0].scripts[0].excludeMatches, []);
+  assert.deepEqual(lastMessage(port, MSG.STATE).settings, {
+    observePageApis: true,
+    excludedSites: []
+  });
+});
+
+test('turning page instrumentation off unregisters it and remembers the choice', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 82 });
+  await controller.flush();
+
+  port.receive({ type: MSG.SET_OBSERVE_PAGE_APIS, enabled: false });
+  await controller.flush();
+
+  assert.deepEqual(
+    chrome.scriptingCalls.filter((entry) => entry.call === 'unregister').at(-1).ids,
+    ['domainscan-page-probe']
+  );
+  assert.equal(lastMessage(port, MSG.STATE).settings.observePageApis, false);
+  assert.equal(chrome.localData.settings.observePageApis, false);
+
+  port.receive({ type: MSG.SET_OBSERVE_PAGE_APIS, enabled: true });
+  await controller.flush();
+  assert.ok(chrome.scriptingCalls.filter((entry) => entry.call === 'register').length >= 2);
+  assert.equal(lastMessage(port, MSG.STATE).settings.observePageApis, true);
+});
+
+test('excluding the current site keeps instrumentation everywhere else', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 83 });
+  navigate(chrome, 83, 'https://login.example.com/');
+  await controller.flush();
+
+  port.receive({ type: MSG.SET_SITE_OBSERVED, observed: false });
+  await controller.flush();
+
+  const update = chrome.scriptingCalls.filter((entry) => entry.call === 'update').at(-1);
+  assert.deepEqual(update.scripts[0].excludeMatches, [
+    '*://example.com/*',
+    '*://*.example.com/*'
+  ]);
+  assert.deepEqual(lastMessage(port, MSG.STATE).settings.excludedSites, ['example.com']);
+  assert.deepEqual(chrome.localData.settings.excludedSites, ['example.com']);
+
+  port.receive({ type: MSG.SET_SITE_OBSERVED, observed: true });
+  await controller.flush();
+  assert.deepEqual(
+    chrome.scriptingCalls.filter((entry) => entry.call === 'update').at(-1).scripts[0].excludeMatches,
+    []
+  );
+});
+
+test('a remembered choice is applied before any page is instrumented', async () => {
+  const chrome = fakeChrome({}, {
+    settings: { observePageApis: true, excludedSites: ['mts.ru'] }
+  });
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+
+  const registered = chrome.scriptingCalls.filter((entry) => entry.call === 'register').at(-1);
+  assert.deepEqual(registered.scripts[0].excludeMatches, ['*://mts.ru/*', '*://*.mts.ru/*']);
+});
+
+test('a signal from an excluded site is refused even if something still reports one', async () => {
+  const chrome = fakeChrome({}, {
+    settings: { observePageApis: true, excludedSites: ['example.com'] }
+  });
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 84, 'https://login.example.com/', 'document-login');
+  await controller.flush();
+
+  chrome.runtime.onMessage.emit(
+    { type: MSG.FINGERPRINT, signal: 'canvas_readback' },
+    {
+      tab: { id: 84, url: 'https://login.example.com/' },
+      frameId: 0,
+      documentId: 'document-login',
+      documentLifecycle: 'active'
+    }
+  );
+  await controller.flush();
+
+  assert.deepEqual(controller.getState(84).fingerprint.signals, {});
 });

@@ -12,7 +12,10 @@ The extension has four layers:
 
 1. `src/lib/`: pure normalization and immutable state transitions.
 2. `src/background/controller.js`: Chrome event adapter, persistence, and subscriptions.
-3. `src/content/`: MAIN-world instrumentation plus an ISOLATED-world relay.
+3. `src/content/`: MAIN-world instrumentation plus an ISOLATED-world relay. The relay is declared in
+   the manifest; the MAIN-world probe is registered at runtime with `chrome.scripting`, which is what
+   makes it switchable. Chrome keeps a registered script across browser restarts, so only the very
+   first run after installation has a window in which a page can load before the probe exists.
 4. `src/sidepanel/`: active-tab connection, derived rows, rendering, and copy actions.
 
 The list is reconciled, never rebuilt: a destination keeps its own row element while it stays
@@ -202,9 +205,16 @@ never assigns a numeric risk score.
 `src/common/messages.js` defines:
 
 - port: `domainscan`;
-- panel messages: `HELLO`, `SET_PAUSED`, `CLEAR`;
-- background message: `STATE`;
+- panel messages: `HELLO`, `SET_PAUSED`, `CLEAR`, `SET_OBSERVE_PAGE_APIS`, `SET_SITE_OBSERVED`;
+- background message: `STATE`, which carries the tab state and the current settings;
 - content message: `FINGERPRINT`.
+
+Settings live in `chrome.storage.local` under `settings`: `observePageApis` and `excludedSites` (site
+keys). They are loaded and applied before any page of the session is instrumented. Switching them
+re-registers or unregisters the probe first and tells the panel afterwards, so the panel never claims a
+page is unwatched while the probe is still there. A signal that somehow still arrives from an excluded
+site or while watching is off is refused. Network observation is unaffected: only page instrumentation
+is switched.
 
 State is mirrored to `chrome.storage.session` under `tab:<id>`. Background initialization
 rehydrates storage before queued browser events are applied. Writes are ordered per tab; a storage

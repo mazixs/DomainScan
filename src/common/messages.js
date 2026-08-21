@@ -6,11 +6,19 @@ export const PORT_NAME = 'domainscan';
 
 export const MSG = {
   HELLO: 'HELLO',            // panel -> bg  { type, tabId }
-  STATE: 'STATE',            // bg -> panel  { type, state: TabState }
+  STATE: 'STATE',            // bg -> panel  { type, state: TabState, settings: Settings }
   SET_PAUSED: 'SET_PAUSED',  // panel -> bg  { type, paused: boolean }
   CLEAR: 'CLEAR',            // panel -> bg  { type }
+  // panel -> bg  { type, enabled: boolean } — page API observation as a whole
+  SET_OBSERVE_PAGE_APIS: 'SET_OBSERVE_PAGE_APIS',
+  // panel -> bg  { type, observed: boolean } — the site of the bound tab only
+  SET_SITE_OBSERVED: 'SET_SITE_OBSERVED',
   FINGERPRINT: 'FINGERPRINT' // content -> bg { type, signal: canonicalSignalName }
 };
+
+export const SETTINGS_KEY = 'settings';
+
+export const PROBE_SCRIPT_ID = 'domainscan-page-probe';
 
 export const STORAGE_PREFIX = 'tab:';
 

@@ -21,6 +21,11 @@ export const FALLBACK_EN = {
   recordingSince: 'Record kept since $TIME$',
   unencrypted: 'Contacted without encryption',
   foldedFrom: 'from',
+  watchApisStop: 'Stop watching browser API use',
+  watchApisStart: 'Watch browser API use',
+  watchSiteStop: 'Stop watching on this site',
+  watchSiteStart: 'Watch on this site',
+  apiWatchOff: 'Browser API use is not being watched.',
   viaServiceWorker: 'via service worker',
   viaServiceWorkerHint: "Requested by the site's service worker, which every tab of this site shares — not by this page.",
 
