@@ -291,9 +291,9 @@ test('a download from another site never becomes the site of the tab', async () 
   await download;
 
   await expect(panel.locator('#site-host')).toHaveText('shop.alpha.test');
-  const hosts = await panel.locator('#list .host').allInnerTexts();
-  expect(hosts).toContain('cdn.alpha.test');
-  expect(hosts).toContain('files.gamma.test');
+  // The request the tab really made stays visible under the site that made it.
+  await expect(panel.locator('#list')).toContainText('cdn.alpha.test');
+  await expect(panel.locator('#list')).toContainText('files.gamma.test');
   await page.close();
   await panel.close();
 });

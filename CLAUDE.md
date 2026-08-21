@@ -65,6 +65,10 @@ and subdomain depth never split a session; a different `siteKey` clears evidence
 and pause preference. State is mirrored to `chrome.storage.session` under `tab:<id>`, so it survives
 service-worker suspension but not tab closure. Tabs never share destination objects.
 
+**Delivery:** `commit(state)` coalesces into a 100 ms window (`DELIVERY_INTERVAL_MS`); pass
+`{ immediate: true }` only for navigation commits and panel commands. Committing per request costs
+quadratic serialization — 4000 writes and 611 MB for 2000 requests, versus 11 writes and 1.6 MB.
+
 **IP correlation:** `onBeforeRequest` records the destination and binds the request ID to the current
 site session; `onResponseStarted` may attach its IP only if request ID, tab, hostname, and site
 session all still match. This is deliberate — do not "simplify" it, or a late response from the

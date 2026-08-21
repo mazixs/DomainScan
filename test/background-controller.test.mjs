@@ -36,8 +36,10 @@ function fakePort(name = PORT_NAME) {
 
 function fakeChrome(initialStorage = {}) {
   const storage = structuredClone(initialStorage);
+  const counters = { writes: 0 };
   return {
     storageData: storage,
+    counters,
     webRequest: {
       onBeforeRequest: fakeEvent(),
       onResponseStarted: fakeEvent(),
@@ -70,6 +72,7 @@ function fakeChrome(initialStorage = {}) {
           return structuredClone(storage);
         },
         async set(values) {
+          counters.writes += 1;
           Object.assign(storage, structuredClone(values));
         },
         async remove(key) {
@@ -481,4 +484,56 @@ test('a signal from a cross-origin frame binds to the top-level tab URL', async 
   await controller.flush();
   assert.equal(controller.getState(37).fingerprint.signals.timezone, undefined);
   assert.equal(controller.getState(37).fingerprint.signals.language, undefined);
+});
+
+test('a burst of requests is written and pushed once without losing any of it', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 41 });
+  navigate(chrome, 41, 'https://one.alpha.test/');
+  await controller.flush();
+
+  const writesBefore = chrome.counters.writes;
+  const statesBefore = port.sent.filter((message) => message.type === MSG.STATE).length;
+  for (const host of ['a', 'b', 'c', 'd', 'e']) {
+    request(chrome, 41, `https://${host}.alpha.test/asset`);
+  }
+  await controller.flush();
+
+  const writes = chrome.counters.writes - writesBefore;
+  const states = port.sent.filter((message) => message.type === MSG.STATE).length - statesBefore;
+  assert.equal(writes, 1, `five requests must not cost five writes, got ${writes}`);
+  assert.equal(states, 1, `five requests must not cost five panel updates, got ${states}`);
+
+  const destinations = Object.keys(lastState(port).destinations).sort();
+  assert.deepEqual(destinations, [
+    'host|a.alpha.test',
+    'host|b.alpha.test',
+    'host|c.alpha.test',
+    'host|d.alpha.test',
+    'host|e.alpha.test',
+    'host|one.alpha.test'
+  ]);
+  assert.deepEqual(
+    Object.keys(chrome.storageData['tab:41'].destinations).sort(),
+    destinations
+  );
+});
+
+test('a tab closed before a pending write lands leaves nothing behind', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 42, 'https://one.alpha.test/');
+  await controller.flush();
+
+  request(chrome, 42, 'https://cdn.alpha.test/a.js');
+  chrome.tabs.onRemoved.emit(42);
+  await controller.flush();
+
+  assert.equal(controller.getState(42), undefined);
+  assert.equal(chrome.storageData['tab:42'], undefined);
 });

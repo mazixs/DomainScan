@@ -56,6 +56,8 @@ function legacySignal(message) {
   return null;
 }
 
+const DELIVERY_INTERVAL_MS = 100;
+
 export function createBackgroundController(
   chromeApi,
   { now = () => Date.now(), logger = console } = {}
@@ -67,6 +69,8 @@ export function createBackgroundController(
   const requestSites = new Map();
   const currentDocuments = new Map();
   const pendingNavigations = new Map();
+  const pendingDelivery = new Set();
+  let deliveryTimer = null;
 
   function diagnose(operation, error, tabId) {
     try {
@@ -140,10 +144,35 @@ export function createBackgroundController(
     }
   }
 
-  function commit(state) {
+  // Accumulation is bursty: a single page can make hundreds of requests, and writing
+  // and posting the whole tab state per request costs quadratic serialization for
+  // evidence the user cannot read that fast anyway. Bursts are coalesced; anything
+  // the user or a navigation triggers is delivered at once.
+  function commit(state, { immediate = false } = {}) {
     tabs.set(state.tabId, state);
-    pushState(state.tabId);
+    if (immediate) {
+      deliver(state.tabId);
+      return;
+    }
+    pendingDelivery.add(state.tabId);
+    if (deliveryTimer == null) {
+      deliveryTimer = setTimeout(() => {
+        deliveryTimer = null;
+        deliverPending();
+      }, DELIVERY_INTERVAL_MS);
+    }
+  }
+
+  function deliver(tabId) {
+    pendingDelivery.delete(tabId);
+    const state = tabs.get(tabId);
+    if (!state) return;
+    pushState(tabId);
     persist(state);
+  }
+
+  function deliverPending() {
+    for (const tabId of [...pendingDelivery]) deliver(tabId);
   }
 
   function unbindPort(port) {
@@ -254,7 +283,7 @@ export function createBackgroundController(
       siteKey: state.siteKey,
       ids: new Set(documentId ? [documentId] : [])
     });
-    commit(state);
+    commit(state, { immediate: true });
   }
 
   function destinationId(host) {
@@ -328,14 +357,14 @@ export function createBackgroundController(
         if (tabId == null) return;
         const state = getOrCreate(tabId);
         if (message.type === MSG.SET_PAUSED) {
-          commit({ ...state, paused: !!message.paused, updatedAt: now() });
+          commit({ ...state, paused: !!message.paused, updatedAt: now() }, { immediate: true });
         } else if (message.type === MSG.CLEAR) {
           commit({
             ...state,
             destinations: {},
             fingerprint: { signals: {} },
             updatedAt: now()
-          });
+          }, { immediate: true });
         }
       });
     });
@@ -390,6 +419,7 @@ export function createBackgroundController(
       tabs.delete(tabId);
       currentDocuments.delete(tabId);
       pendingNavigations.delete(tabId);
+      pendingDelivery.delete(tabId);
       for (const [requestId, requestSite] of requestSites) {
         if (requestSite.tabId === tabId) requestSites.delete(requestId);
       }
@@ -422,6 +452,11 @@ export function createBackgroundController(
     },
     async flush() {
       await work;
+      if (deliveryTimer != null) {
+        clearTimeout(deliveryTimer);
+        deliveryTimer = null;
+      }
+      deliverPending();
       await Promise.all([...persistence.values()]);
     }
   };

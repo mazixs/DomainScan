@@ -153,9 +153,8 @@ function sampleState() {
 // ---------------------------------------------------------------------------
 // Derivation helpers
 // ---------------------------------------------------------------------------
-function destinationsArray() {
-  if (!state || !state.destinations) return [];
-  return Object.values(state.destinations).sort((a, b) => a.firstSeen - b.firstSeen);
+function destinationCount() {
+  return state && state.destinations ? Object.keys(state.destinations).length : 0;
 }
 
 /**
@@ -171,10 +170,11 @@ function buildRows() {
 // Rendering
 // ---------------------------------------------------------------------------
 function render() {
+  const rows = buildRows();
   renderHeader();
   renderFingerprint();
-  renderModeHelp();
-  renderList();
+  renderModeHelp(rows);
+  renderList(rows);
   updateCopySelected();
 }
 
@@ -191,7 +191,7 @@ function renderHeader() {
 
   el.siteHost.textContent = (state && state.pageHost) || '';
 
-  const total = destinationsArray().length;
+  const total = destinationCount();
   el.siteCount.textContent = '';
   const strong = document.createElement('b');
   strong.textContent = String(total);
@@ -244,8 +244,8 @@ function renderFingerprint() {
   }
 }
 
-function renderModeHelp() {
-  const count = buildRows().length;
+function renderModeHelp(rows) {
+  const count = rows.length;
   el.modeHelp.textContent = '';
   el.modeHelp.append(
     t(MODE_HINT[ui.mode]) + ' ',
@@ -265,9 +265,7 @@ function hint(text) {
  * element for as long as they are visible, so an expanded IP list, the focused
  * control and the scroll position survive every incoming destination.
  */
-function renderList() {
-  const rows = buildRows();
-
+function renderList(rows) {
   if (rows.length === 0) {
     el.list.textContent = '';
     el.list.appendChild(emptyRow());
@@ -299,7 +297,7 @@ function renderList() {
 function emptyRow() {
   const li = document.createElement('li');
   li.className = 'empty';
-  const total = destinationsArray().length;
+  const total = destinationCount();
   if (total === 0) {
     const b = document.createElement('b');
     b.textContent = t('emptyTitle');
@@ -595,8 +593,9 @@ function wireEvents() {
   // Search
   el.search.addEventListener('input', () => {
     ui.query = el.search.value;
-    renderList();
-    renderModeHelp();
+    const rows = buildRows();
+    renderList(rows);
+    renderModeHelp(rows);
   });
 
   // Display modes
