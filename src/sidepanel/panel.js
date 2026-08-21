@@ -85,9 +85,13 @@ const SIGNAL_KEY = {
 // Static strings (everything user-facing comes from t())
 // ---------------------------------------------------------------------------
 function applyStaticStrings() {
-  if (!IS_DEMO && chrome.i18n && chrome.i18n.getUILanguage) {
-    const language = chrome.i18n.getUILanguage();
-    document.documentElement.lang = language && language.toLowerCase().startsWith('ru') ? 'ru' : 'en';
+  // The document language drives date and time formatting, so the preview outside
+  // Chrome must follow the browser locale instead of the markup default.
+  const language = !IS_DEMO && chrome.i18n && chrome.i18n.getUILanguage
+    ? chrome.i18n.getUILanguage()
+    : navigator.language;
+  if (language) {
+    document.documentElement.lang = language.toLowerCase().startsWith('ru') ? 'ru' : 'en';
   }
   el.brandName.textContent = t('appName');
   el.settingsLabel.textContent = t('settings');
@@ -199,7 +203,8 @@ function renderHeader() {
 
   // Requests made before this moment are not part of the record, so the panel says
   // where the record starts instead of implying it covers the whole page life.
-  const startedAt = state && state.siteStartedAt;
+  // A tab without a site (a browser page) is not being recorded, so it says nothing.
+  const startedAt = state && state.siteKey ? state.siteStartedAt : null;
   el.recordSince.textContent = Number.isFinite(startedAt)
     ? t('recordingSince', { time: formatTime(startedAt) })
     : '';

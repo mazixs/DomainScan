@@ -285,7 +285,7 @@ test('a download from another site never becomes the site of the tab', async () 
   const panel = await openPanelFor(page);
   await expect(panel.locator('#site-host')).toHaveText('shop.alpha.test');
 
-  const download = page.waitForEvent('download').catch(() => null);
+  const download = page.waitForEvent('download', { timeout: 5000 }).catch(() => null);
   await page.evaluate((target) => { window.location.href = target; },
     url('files.gamma.test', '/download'));
   await download;

@@ -58,13 +58,22 @@ function hasEvidence(state) {
     Object.keys((state.fingerprint && state.fingerprint.signals) || {}).length > 0;
 }
 
-export function recordDestination(state, observation, now = Date.now()) {
-  const rawValue = normalizeHostname(observation && observation.value);
-  if (!rawValue) return state;
-  const value = normalizeIpLiteral(rawValue) || rawValue;
+/** The stable identity of a destination, so no caller has to build the key itself. */
+export function destinationIdentity(value) {
+  const raw = normalizeHostname(value);
+  if (!raw) return null;
+  const normalized = normalizeIpLiteral(raw) || raw;
+  return {
+    id: `${isIpLiteral(normalized) ? 'ip' : 'host'}|${normalized}`,
+    kind: isIpLiteral(normalized) ? 'ip' : 'host',
+    value: normalized
+  };
+}
 
-  const kind = observation.kind || (isIpLiteral(value) ? 'ip' : 'host');
-  const id = `${kind}|${value}`;
+export function recordDestination(state, observation, now = Date.now()) {
+  const identity = destinationIdentity(observation && observation.value);
+  if (!identity) return state;
+  const { id, kind, value } = identity;
   const existing = state.destinations[id];
   const destination = existing
     ? {

@@ -7,6 +7,7 @@ import {
 } from '../lib/domain.js';
 import {
   applyTopLevelNavigation,
+  destinationIdentity,
   makeTabState,
   normalizeTabState,
   recordDestination,
@@ -238,7 +239,6 @@ export function createBackgroundController(
 
     commit(recordDestination(state, {
       value: parsed.hostname,
-      kind: isIpLiteral(parsed.hostname) ? 'ip' : 'host',
       party: classifyParty(parsed.hostname, state.pageHost),
       requestType: mapRequestType(type),
       transport: transportFromUrl(parsed)
@@ -254,41 +254,50 @@ export function createBackgroundController(
     } catch (_error) {
       return;
     }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
 
-    const pending = pendingNavigations.get(tabId);
-    const previous = tabs.get(tabId);
-    if (!pending && previous && previous.siteKey && previous.pageUrl === parsed.origin) {
-      return; // a repeated update about the page already being tracked
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      leaveTheWeb(tabId);
+      return;
     }
-    pendingNavigations.delete(tabId);
+
+    const host = normalizeHostname(parsed.hostname);
+    // A pending navigation belongs to one host. Anything else committing in this tab
+    // is a different page and must not consume it.
+    const pending = pendingNavigations.get(tabId);
+    const committed = pending && pending.host === host ? pending : null;
+    if (committed) pendingNavigations.delete(tabId);
 
     let state = applyTopLevelNavigation(getOrCreate(tabId), url, now());
-    const host = normalizeHostname(parsed.hostname);
-    const documentId = pending ? pending.documentId : null;
+    const identity = destinationIdentity(host);
 
     // Only an observed request may become a destination; a restored page made none.
-    if (pending && pending.host === host && !state.paused && !state.destinations[destinationId(host)]) {
+    if (committed && identity && !state.paused && !state.destinations[identity.id]) {
       state = recordDestination(state, {
         value: host,
-        kind: isIpLiteral(host) ? 'ip' : 'host',
         party: classifyParty(host, state.pageHost),
         requestType: 'document',
-        transport: pending.transport
+        transport: committed.transport
       }, now());
-      if (pending.ip) state = recordResolvedIp(state, host, pending.ip, now());
+      if (committed.ip) state = recordResolvedIp(state, host, committed.ip, now());
     }
 
+    // Every commit replaces the document a page signal may come from.
     currentDocuments.set(tabId, {
       siteKey: state.siteKey,
-      ids: new Set(documentId ? [documentId] : [])
+      ids: new Set(committed && committed.documentId ? [committed.documentId] : [])
     });
     commit(state, { immediate: true });
   }
 
-  function destinationId(host) {
-    return `${isIpLiteral(host) ? 'ip' : 'host'}|${host}`;
+  // A tab showing a browser page has no site, so it keeps no evidence either.
+  function leaveTheWeb(tabId) {
+    pendingNavigations.delete(tabId);
+    currentDocuments.delete(tabId);
+    const previous = tabs.get(tabId);
+    if (!previous || (!previous.siteKey && Object.keys(previous.destinations).length === 0)) return;
+    commit({ ...makeTabState(tabId, now()), paused: previous.paused }, { immediate: true });
   }
+
 
   function onResponseStarted(details) {
     const { tabId, url, ip, requestId } = details || {};
@@ -379,6 +388,8 @@ export function createBackgroundController(
       if (!Number.isInteger(tabId) || tabId < 0) return;
       const state = getOrCreate(tabId);
       if (state.paused) return;
+      // A bfcached, prerendered or dying document is not what the tab shows now.
+      if (typeof sender.documentLifecycle === 'string' && sender.documentLifecycle !== 'active') return;
       const documents = currentDocuments.get(tabId);
       if (documents && typeof sender.documentId === 'string' && documents.ids.size > 0) {
         if (documents.siteKey !== state.siteKey || !documents.ids.has(sender.documentId)) return;
@@ -408,10 +419,31 @@ export function createBackgroundController(
     }
   }
 
+  function pendingMatchesTab(tabId, url) {
+    const pending = pendingNavigations.get(tabId);
+    if (!pending) return false;
+    try {
+      return pending.host === normalizeHostname(new URL(url).hostname);
+    } catch (_error) {
+      return false;
+    }
+  }
+
   chromeApi.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    const url = (changeInfo && changeInfo.url) || (tab && tab.url);
-    if (!Number.isInteger(tabId) || tabId < 0 || typeof url !== 'string') return;
-    enqueue('tabs.onUpdated', () => commitNavigation(tabId, url));
+    if (!Number.isInteger(tabId) || tabId < 0) return;
+    const change = changeInfo || {};
+    const changedUrl = typeof change.url === 'string' ? change.url : null;
+    const tabUrl = tab && typeof tab.url === 'string' ? tab.url : null;
+    // Titles, favicons and audio state say nothing about where the tab is. A reload
+    // keeps the URL, so a finished load of a document we requested counts too.
+    if (!changedUrl && !(change.status === 'complete' && tabUrl)) return;
+    enqueue('tabs.onUpdated', () => {
+      if (changedUrl) {
+        commitNavigation(tabId, changedUrl);
+        return;
+      }
+      if (pendingMatchesTab(tabId, tabUrl)) commitNavigation(tabId, tabUrl);
+    });
   });
 
   chromeApi.tabs.onRemoved.addListener((tabId) => {

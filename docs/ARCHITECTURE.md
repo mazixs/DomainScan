@@ -29,7 +29,11 @@ Each `TabState` belongs to one numeric Chrome tab ID. Its `siteKey` is:
 - otherwise the registrable domain calculated with the bundled full ICANN and PRIVATE PSL.
 
 The site of a tab is taken from the tab's own committed URL (`tabs.onUpdated`), never from a
-requested navigation. A document request only registers a pending navigation; a download, a
+requested navigation. Only a reported URL change counts as a commit, plus a finished load of a
+document already requested in that tab, because a reload keeps the URL — a title, favicon or audio
+update says nothing about where the tab is. A pending navigation belongs to one host and is consumed
+only by a commit of that host. A tab that commits a non-web URL has no site, so it keeps no evidence.
+Every commit replaces the document a page signal may come from. A document request only registers a pending navigation; a download, a
 cancelled navigation or a failed load never becomes the site, while the document request itself
 stays an observed destination of the session it was made from. When a navigation commits, the
 document is recorded once, together with the IP buffered from its response.
@@ -157,9 +161,11 @@ guards all three properties.
 The ISOLATED relay registers first and accepts one synchronous `MessageChannel` from the MAIN probe
 at `document_start`; later replacement channels and ordinary page `postMessage` calls are ignored.
 It accepts each signal at most once per frame document and forwards nothing but the message type and
-the canonical signal name. The controller binds a message to a site by document ID when Chrome
-supplies one, and otherwise by the tab's own top-level URL — so a frame of any origin on the current
-page counts as evidence, while a message that cannot be attributed is dropped. No value read inside
+the canonical signal name. The controller drops a message from a document that is not
+`active` (a back-forward-cached, prerendered or dying document is not what the tab shows), binds the
+rest by document ID when Chrome supplies one, and otherwise by the tab's own top-level URL — so a
+frame of any origin on the current page counts as evidence, while a message that cannot be attributed
+is dropped. No value read inside
 the page decides attribution. A page can still deliberately call an
 instrumented API without using its result, so these signals remain heuristic evidence rather than
 proof of intent.

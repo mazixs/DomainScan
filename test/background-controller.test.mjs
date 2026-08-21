@@ -537,3 +537,180 @@ test('a tab closed before a pending write lands leaves nothing behind', async ()
   assert.equal(controller.getState(42), undefined);
   assert.equal(chrome.storageData['tab:42'], undefined);
 });
+
+test('an update about the page being left does not consume the pending navigation', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 51, 'https://one.alpha.test/', 'document-alpha');
+  await controller.flush();
+
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: 51,
+    url: 'https://one.beta.test/',
+    type: 'main_frame',
+    requestId: 'navigation-beta',
+    documentId: 'document-beta'
+  });
+  chrome.webRequest.onResponseStarted.emit({
+    tabId: 51,
+    url: 'https://one.beta.test/',
+    ip: '203.0.113.30',
+    requestId: 'navigation-beta'
+  });
+  // The page being left keeps ticking its title while the new one is still loading.
+  chrome.tabs.onUpdated.emit(51, { title: '(3) inbox' }, { id: 51, url: 'https://one.alpha.test/' });
+  chrome.tabs.onUpdated.emit(51, { favIconUrl: 'https://one.alpha.test/i.png' }, { id: 51, url: 'https://one.alpha.test/' });
+  await controller.flush();
+
+  chrome.tabs.onUpdated.emit(
+    51,
+    { url: 'https://one.beta.test/', status: 'loading' },
+    { id: 51, url: 'https://one.beta.test/' }
+  );
+  await controller.flush();
+
+  const state = controller.getState(51);
+  assert.equal(state.siteKey, 'beta.test');
+  const document = state.destinations['host|one.beta.test'];
+  assert.ok(document, 'the document of the site that committed is recorded');
+  assert.deepEqual(Object.keys(document.ips), ['203.0.113.30']);
+});
+
+test('a signal from a document that is no longer active is dropped', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 53, 'https://one.alpha.test/', 'document-alpha');
+  await controller.flush();
+
+  // No request accompanies this navigation, so the current document is unknown.
+  chrome.tabs.onUpdated.emit(
+    53,
+    { url: 'https://two.alpha.test/', status: 'loading' },
+    { id: 53, url: 'https://two.alpha.test/' }
+  );
+  await controller.flush();
+
+  chrome.runtime.onMessage.emit(
+    { type: MSG.FINGERPRINT, signal: 'canvas_readback' },
+    {
+      tab: { id: 53, url: 'https://two.alpha.test/' },
+      frameId: 0,
+      documentId: 'document-alpha',
+      documentLifecycle: 'cached'
+    }
+  );
+  await controller.flush();
+
+  assert.deepEqual(controller.getState(53).fingerprint.signals, {});
+});
+
+test('a restored document may report signals when its own request was never seen', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 54, 'https://one.alpha.test/', 'document-alpha');
+  navigate(chrome, 54, 'https://two.alpha.test/', 'document-two');
+  await controller.flush();
+
+  chrome.tabs.onUpdated.emit(
+    54,
+    { url: 'https://one.alpha.test/', status: 'loading' },
+    { id: 54, url: 'https://one.alpha.test/' }
+  );
+  await controller.flush();
+
+  chrome.runtime.onMessage.emit(
+    { type: MSG.FINGERPRINT, signal: 'timezone' },
+    {
+      tab: { id: 54, url: 'https://one.alpha.test/' },
+      frameId: 0,
+      documentId: 'document-alpha',
+      documentLifecycle: 'active'
+    }
+  );
+  await controller.flush();
+
+  assert.ok(controller.getState(54).fingerprint.signals.timezone);
+});
+
+test('a reload rebinds the document a signal must come from', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 55, 'https://one.alpha.test/', 'document-first');
+  await controller.flush();
+
+  // A reload keeps the URL, so Chrome reports progress instead of a URL change.
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: 55,
+    url: 'https://one.alpha.test/',
+    type: 'main_frame',
+    requestId: 'reload-request',
+    documentId: 'document-second'
+  });
+  chrome.tabs.onUpdated.emit(55, { status: 'complete' }, { id: 55, url: 'https://one.alpha.test/' });
+  await controller.flush();
+
+  chrome.runtime.onMessage.emit(
+    { type: MSG.FINGERPRINT, signal: 'timezone' },
+    {
+      tab: { id: 55, url: 'https://one.alpha.test/' },
+      frameId: 0,
+      documentId: 'document-second',
+      documentLifecycle: 'active'
+    }
+  );
+  await controller.flush();
+
+  assert.ok(controller.getState(55).fingerprint.signals.timezone);
+});
+
+test('a tab that leaves the web keeps no site and no evidence', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 56, 'https://one.alpha.test/');
+  request(chrome, 56, 'https://cdn.alpha.test/a.js');
+  await controller.flush();
+
+  chrome.tabs.onUpdated.emit(
+    56,
+    { url: 'chrome://settings/', status: 'loading' },
+    { id: 56, url: 'chrome://settings/' }
+  );
+  await controller.flush();
+
+  const state = controller.getState(56);
+  assert.equal(state.siteKey, null);
+  assert.equal(state.pageHost, null);
+  assert.deepEqual(state.destinations, {});
+});
+
+test('seeding forgets a stored site when the tab is no longer on the web', async () => {
+  const chrome = fakeChrome({
+    'tab:57': {
+      tabId: 57,
+      siteKey: 'alpha.test',
+      pageUrl: 'https://one.alpha.test',
+      pageHost: 'one.alpha.test',
+      destinations: {
+        'host|cdn.alpha.test': {
+          id: 'host|cdn.alpha.test', kind: 'host', value: 'cdn.alpha.test',
+          party: 'third', requestType: 'script', transport: 'https',
+          ips: {}, firstSeen: 10, lastSeen: 10, count: 1
+        }
+      },
+      fingerprint: { signals: {} },
+      paused: false,
+      updatedAt: 10
+    }
+  });
+  chrome.tabs.openTabs = [{ id: 57, url: 'chrome://extensions/' }];
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+
+  assert.equal(controller.getState(57).siteKey, null);
+  assert.deepEqual(controller.getState(57).destinations, {});
+});
