@@ -108,6 +108,9 @@ signal name — never a value read in the page.
   and the `case` allowlist updated, or CI fails the package job.
 - **`src/lib/psl-data.js` is generated.** Change it only via `node scripts/update-psl.mjs`, which also
   refreshes `third_party/publicsuffix/`.
+- **A wrapper lives only until its signal is reported.** `emit()` releases every wrapper of that
+  signal through `rememberWrapper`, because a page's own console warnings carry a stack and anything
+  still installed shows up in it. Never add a wrapper that outlives its signal.
 - **MAIN-world instrumentation must stay indistinguishable.** A wrapper that reports non-native
   source, gains an own `prototype`, or leaks a `chrome-extension://` frame into a page-visible stack
   makes bot protections (Qrator, Cloudflare, DataDome) escalate to a hard 403 and exposes the

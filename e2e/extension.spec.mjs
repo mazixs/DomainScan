@@ -114,6 +114,19 @@ test.beforeAll(async () => {
         </script>`);
       return;
     }
+    if (request.url === '/canvas-loop') {
+      response.setHeader('Content-Type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html>
+        <title>canvas loop</title>
+        <canvas id="c" width="40" height="40"></canvas>
+        <script>
+          const context = document.getElementById('c').getContext('2d');
+          let total = 0;
+          for (let i = 0; i < 6; i += 1) total += context.getImageData(0, 0, 8, 8).data.length;
+          window.__read = total;
+        </script>`);
+      return;
+    }
     if (request.url === '/beacon') {
       response.statusCode = 204;
       response.end();
@@ -495,6 +508,30 @@ test('what the page being left sends on its way out stays out of the next site',
   await expect(panel.locator('#list')).toContainText('cdn.arrival.gamma.test');
   await expect(panel.locator('#list')).not.toContainText('analytics.alpha.test');
   await expect(panel.locator('#list')).not.toContainText('leaving.alpha.test');
+  await page.close();
+  await panel.close();
+});
+
+test('a page that keeps reading its canvas is warned about by Chrome, not about us', async () => {
+  const page = await context.newPage();
+  const cdp = await context.newCDPSession(page);
+  const entries = [];
+  await cdp.send('Log.enable');
+  cdp.on('Log.entryAdded', ({ entry }) => entries.push(entry));
+
+  await page.goto(url('canvas.alpha.test', '/canvas-loop'));
+  await expect.poll(() => entries.some((entry) => entry.text.includes('Canvas2D'))).toBe(true);
+
+  const panel = await openPanelFor(page);
+  // The probe was installed: the first readback is what produced the signal.
+  await expect(panel.locator('#signal-list > li')).toHaveCount(1);
+
+  const framesOfExtension = entries.flatMap((entry) =>
+    (entry.stackTrace ? entry.stackTrace.callFrames : [])
+      .map((frame) => frame.url || '')
+      .filter((frameUrl) => frameUrl.startsWith('chrome-extension://')));
+  expect(framesOfExtension).toEqual([]);
+
   await page.close();
   await panel.close();
 });

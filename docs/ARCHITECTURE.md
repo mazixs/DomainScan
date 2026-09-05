@@ -183,6 +183,14 @@ Ordinary JavaScript downloads, Canvas drawing, and WebGL rendering do not create
 No returned value, coordinates, language, timezone, renderer string, audio data, or UA hint is
 sent to the extension.
 
+Each signal is reported once per document, and the wrappers behind it are handed back the moment it
+is reported: the page gets its own function object again, and this script leaves the call path for
+good. That matters beyond speed — a page's own console warnings (`Canvas2D: Multiple readback
+operations`, `WebGL: INVALID_ENUM`) carry a JS stack, and a wrapper still in place puts the extension
+into it for everyone to see. Reading the unmasked WebGL renderer requires `getExtension`
+(`WEBGL_debug_renderer_info`) first, so asking for that extension is taken as the same evidence, which
+keeps this script out of `getParameter` — a call a render loop makes thousands of times.
+
 Instrumentation stays indistinguishable from the untouched browser. Each wrapper is a concise
 method, so it has no own `prototype` and cannot be constructed, exactly like a native built-in.
 `Function.prototype.toString` is replaced once, before the first wrapper, and reports the source of

@@ -60,6 +60,7 @@ function createProbeHarness({ install = true } = {}) {
   HTMLCanvasElement.prototype.toDataURL = method('data-url');
   HTMLCanvasElement.prototype.toBlob = method('blob');
   WebGLRenderingContext.prototype.getParameter = method('webgl-1');
+  WebGLRenderingContext.prototype.getExtension = method('extension');
   WebGL2RenderingContext.prototype.getParameter = method('webgl-2');
   AnalyserNode.prototype.getFloatFrequencyData = method('frequency-data');
   AnalyserNode.prototype.getByteFrequencyData = method('byte-frequency-data');
@@ -145,11 +146,23 @@ function createProbeHarness({ install = true } = {}) {
     XMLHttpRequest
   });
 
+  // What the page had before instrumentation, so a test can tell whether the probe
+  // handed the original function back.
+  const originals = {
+    getImageData: CanvasRenderingContext2D.prototype.getImageData,
+    toDataURL: HTMLCanvasElement.prototype.toDataURL,
+    toBlob: HTMLCanvasElement.prototype.toBlob,
+    getParameter: WebGLRenderingContext.prototype.getParameter,
+    getTimezoneOffset: DateHarness.prototype.getTimezoneOffset,
+    resolvedOptions: DateTimeFormat.prototype.resolvedOptions
+  };
+
   if (install) {
     vm.runInContext(probeSource, context, { filename: 'fingerprint-probe.js' });
   }
 
   return {
+    originals,
     // Evaluates page-side code inside the probe's own realm, so it sees the same
     // Function.prototype a real page script would see.
     evaluate: (code) => vm.runInContext(code, context),
@@ -495,4 +508,69 @@ test('relay sends nothing but the message type and the signal name', () => {
   harness.dispatch({ signal: 'timezone' });
 
   assert.deepEqual(Object.keys(harness.sent[0]).sort(), ['signal', 'type']);
+});
+
+test('an instrumented API is handed back once its signal has been reported', () => {
+  const harness = createProbeHarness();
+  const { CanvasRenderingContext2D, HTMLCanvasElement } = harness.constructors;
+
+  assert.notEqual(
+    Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'getImageData').value,
+    harness.originals.getImageData,
+    'the probe is installed before the signal'
+  );
+
+  new CanvasRenderingContext2D().getImageData(0, 0, 1, 1);
+
+  assert.equal(
+    Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'getImageData').value,
+    harness.originals.getImageData,
+    'the page gets its own function back'
+  );
+  assert.equal(
+    Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'toDataURL').value,
+    harness.originals.toDataURL,
+    'every API of that signal is released together'
+  );
+  assert.deepEqual(postedSignals(harness), ['canvas_readback']);
+});
+
+test('APIs of a signal that has not been reported stay observed', () => {
+  const harness = createProbeHarness();
+  const { CanvasRenderingContext2D, DateHarness } = harness.constructors;
+
+  new CanvasRenderingContext2D().getImageData(0, 0, 1, 1);
+  new DateHarness().getTimezoneOffset();
+
+  assert.deepEqual(postedSignals(harness), ['canvas_readback', 'timezone']);
+});
+
+test('releasing an API never overwrites what the page put there afterwards', () => {
+  const harness = createProbeHarness();
+  const { CanvasRenderingContext2D, HTMLCanvasElement } = harness.constructors;
+  const pageOwn = function toDataURL() { return 'page'; };
+  HTMLCanvasElement.prototype.toDataURL = pageOwn;
+
+  new CanvasRenderingContext2D().getImageData(0, 0, 1, 1);
+
+  assert.equal(HTMLCanvasElement.prototype.toDataURL, pageOwn);
+});
+
+test('asking for the debug renderer extension is itself the signal', () => {
+  const harness = createProbeHarness();
+  const { WebGLRenderingContext } = harness.constructors;
+  const context = new WebGLRenderingContext();
+
+  const other = context.getExtension('OES_texture_float');
+  assert.deepEqual(postedSignals(harness), [], 'an ordinary extension says nothing');
+
+  context.getExtension('WEBGL_debug_renderer_info');
+
+  assert.equal(other.returnValue, 'extension');
+  assert.deepEqual(postedSignals(harness), ['webgl_renderer']);
+  assert.equal(
+    Object.getOwnPropertyDescriptor(WebGLRenderingContext.prototype, 'getParameter').value,
+    harness.originals.getParameter,
+    'the page reads the renderer itself, without us in the call'
+  );
 });

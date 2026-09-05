@@ -20,6 +20,30 @@
     return;
   }
 
+  // Each signal is reported once per document, so the wrappers behind it have done
+  // their job the moment it is reported. Keeping them would leave this script on the
+  // stack of every later call — including the console warnings a page produces on its
+  // own — and in the way of hot paths like a render loop.
+  var installedBySignal = Object.create(null);
+
+  function rememberWrapper(signal, release) {
+    if (!installedBySignal[signal]) installedBySignal[signal] = [];
+    installedBySignal[signal].push(release);
+  }
+
+  function releaseWrappers(signal) {
+    var releases = installedBySignal[signal];
+    if (!releases) return;
+    installedBySignal[signal] = null;
+    for (var i = 0; i < releases.length; i += 1) {
+      try {
+        releases[i]();
+      } catch (error) {
+        // A property that can no longer be redefined simply keeps the wrapper.
+      }
+    }
+  }
+
   function emit(signal) {
     if (reported[signal]) return;
     reported[signal] = true;
@@ -28,6 +52,7 @@
     } catch (error) {
       // Observation must never affect the page.
     }
+    releaseWrappers(signal);
   }
 
   // A wrapper that reveals itself is worse than no observation at all: bot
@@ -111,7 +136,7 @@
     return wrapper;
   }
 
-  function replaceMethod(proto, name, createInvoke) {
+  function replaceMethod(proto, name, signal, createInvoke) {
     try {
       if (!proto) return;
       var descriptor = Object.getOwnPropertyDescriptor(proto, name);
@@ -125,13 +150,20 @@
         writable: descriptor.writable,
         value: patched
       });
+      rememberWrapper(signal, function () {
+        // Only our own wrapper may be taken back: whatever the page put there since
+        // then belongs to the page.
+        var current = Object.getOwnPropertyDescriptor(proto, name);
+        if (!current || current.value !== patched) return;
+        Object.defineProperty(proto, name, descriptor);
+      });
     } catch (error) {
       // Non-configurable or unusual host objects remain untouched.
     }
   }
 
   function observeMethod(proto, name, signal) {
-    replaceMethod(proto, name, function (original) {
+    replaceMethod(proto, name, signal, function (original) {
       return function (receiver, args) {
         var result = original.apply(receiver, args);
         try {
@@ -161,6 +193,11 @@
         enumerable: descriptor.enumerable,
         get: patchedGet,
         set: descriptor.set
+      });
+      rememberWrapper(signal, function () {
+        var current = Object.getOwnPropertyDescriptor(proto, name);
+        if (!current || current.get !== patchedGet) return;
+        Object.defineProperty(proto, name, descriptor);
       });
     } catch (error) {
       // Non-configurable or unusual host objects remain untouched.
@@ -215,7 +252,19 @@
   WEBGL_SENSITIVE_PARAMS[0x1F01] = true; // RENDERER
 
   function observeWebGlGetParameter(proto) {
-    replaceMethod(proto, 'getParameter', function (original) {
+    // Reading the unmasked vendor or renderer requires this extension first, so
+    // asking for it is the same evidence — and catching it there keeps this script
+    // out of getParameter, which a page may call thousands of times per second.
+    replaceMethod(proto, 'getExtension', 'webgl_renderer', function (original) {
+      return function (receiver, args) {
+        var result = original.apply(receiver, args);
+        try {
+          if (String(args[0]) === 'WEBGL_debug_renderer_info') emit('webgl_renderer');
+        } catch (error) {}
+        return result;
+      };
+    });
+    replaceMethod(proto, 'getParameter', 'webgl_renderer', function (original) {
       return function (receiver, args) {
         var result = original.apply(receiver, args);
         try {
