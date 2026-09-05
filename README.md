@@ -5,10 +5,12 @@
 A Chrome side panel that records every network destination the active tab contacts — hostnames,
 resolved IP addresses, WebSocket handshakes — and keeps that record exact, readable and copyable.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/mazixs/DomainScan/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/mazixs/DomainScan/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/mazixs/DomainScan?style=flat-square)](https://github.com/mazixs/DomainScan/releases/latest)
-[![Chrome 114+](https://img.shields.io/badge/Chrome-114%2B-blue?style=flat-square)](https://developer.chrome.com/docs/extensions/reference/api/sidePanel)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+<p align="center">
+  <a href="https://github.com/mazixs/DomainScan/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/mazixs/DomainScan/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status"></a>
+  <a href="https://github.com/mazixs/DomainScan/releases/latest"><img src="https://img.shields.io/github/v/release/mazixs/DomainScan?style=flat-square" alt="Latest release"></a>
+  <a href="https://developer.chrome.com/docs/extensions/reference/api/sidePanel"><img src="https://img.shields.io/badge/Chrome-114%2B-blue?style=flat-square" alt="Chrome 114 or newer"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="MIT license"></a>
+</p>
 
 <p align="center">
   <img src="docs/images/panel-record.png" width="420"

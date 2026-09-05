@@ -5,10 +5,12 @@
 Боковая панель Chrome, которая записывает все сетевые назначения активной вкладки - узлы, полученные
 IP-адреса, рукопожатия WebSocket - и хранит эту запись точной, читаемой и готовой к копированию.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/mazixs/DomainScan/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/mazixs/DomainScan/actions/workflows/ci.yml)
-[![Выпуск](https://img.shields.io/github/v/release/mazixs/DomainScan?style=flat-square&label=%D0%B2%D1%8B%D0%BF%D1%83%D1%81%D0%BA)](https://github.com/mazixs/DomainScan/releases/latest)
-[![Chrome 114+](https://img.shields.io/badge/Chrome-114%2B-blue?style=flat-square)](https://developer.chrome.com/docs/extensions/reference/api/sidePanel)
-[![Лицензия MIT](https://img.shields.io/badge/%D0%9B%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-MIT-green?style=flat-square)](LICENSE)
+<p align="center">
+  <a href="https://github.com/mazixs/DomainScan/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/mazixs/DomainScan/ci.yml?branch=main&style=flat-square&label=CI" alt="Состояние сборки"></a>
+  <a href="https://github.com/mazixs/DomainScan/releases/latest"><img src="https://img.shields.io/github/v/release/mazixs/DomainScan?style=flat-square&label=%D0%B2%D1%8B%D0%BF%D1%83%D1%81%D0%BA" alt="Последний выпуск"></a>
+  <a href="https://developer.chrome.com/docs/extensions/reference/api/sidePanel"><img src="https://img.shields.io/badge/Chrome-114%2B-blue?style=flat-square" alt="Chrome 114 или новее"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/%D0%9B%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-MIT-green?style=flat-square" alt="Лицензия MIT"></a>
+</p>
 
 <p align="center">
   <img src="docs/images/panel-record.png" width="420"
