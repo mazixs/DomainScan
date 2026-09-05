@@ -292,6 +292,10 @@ export function createBackgroundController(
       return;
     }
     if (isIgnorableRequest(parsed)) return;
+    // A page being torn down still fires its unload beacons, and a prerendered page
+    // contacts destinations for a page nobody is looking at. Neither belongs to the
+    // site the tab is showing, and attributing them there is how records got mixed.
+    if (typeof details.documentLifecycle === 'string' && details.documentLifecycle !== 'active') return;
 
     // A request a service worker makes names no tab, so it is attributed by the
     // origin that owns the worker instead of being dropped.
@@ -300,7 +304,8 @@ export function createBackgroundController(
       return;
     }
 
-    const state = getOrCreate(tabId);
+    let state = getOrCreate(tabId);
+    if (type !== 'main_frame') state = reconcileSiteWithRequest(tabId, state, details);
     if (type === 'main_frame') {
       // A requested navigation is not a committed one: downloads, cancelled
       // navigations and failed loads never become the tab's site. The document
@@ -333,6 +338,26 @@ export function createBackgroundController(
       transport: transportFromUrl(parsed),
       source: 'page'
     }, now()));
+  }
+
+  // The tab's own URL is the primary statement about the site, but a request the
+  // top-level document makes is a second one: it comes from the document that is
+  // loaded right now. When the two disagree, the commit was missed, and following
+  // the document keeps the record of one site from filling with another's.
+  function reconcileSiteWithRequest(tabId, state, details) {
+    if (details.frameType !== 'outermost_frame') return state;
+    if (details.parentDocumentId) return state;
+    if (!isPageOrigin(details.initiator)) return state;
+    let origin;
+    try {
+      origin = new URL(details.initiator);
+    } catch (_error) {
+      return state;
+    }
+    const site = siteKeyForHost(normalizeHostname(origin.hostname));
+    if (!site || site === state.siteKey) return state;
+    commitNavigation(tabId, details.initiator);
+    return tabs.get(tabId) || state;
   }
 
   // A service worker belongs to one origin and is shared by every tab showing it,
@@ -384,6 +409,7 @@ export function createBackgroundController(
     const pending = pendingNavigations.get(tabId);
     const committed = pending && pending.host === host ? pending : null;
     if (committed) pendingNavigations.delete(tabId);
+    if (committed && committed.failed) return;
 
     let state = applyTopLevelNavigation(getOrCreate(tabId), url, now());
     const identity = destinationIdentity(host);
@@ -458,8 +484,13 @@ export function createBackgroundController(
   );
   const forgetRequest = (operation, details) => {
     enqueue(operation, () => {
-      if (details && typeof details.requestId === 'string') {
-        requestSites.delete(details.requestId);
+      if (!details || typeof details.requestId !== 'string') return;
+      requestSites.delete(details.requestId);
+      // A navigation that failed still leaves its address as the tab URL of an error
+      // page. It never loaded, so it is not a site session.
+      const pending = pendingNavigations.get(details.tabId);
+      if (pending && pending.requestId === details.requestId && operation.endsWith('onErrorOccurred')) {
+        pending.failed = true;
       }
     });
   };

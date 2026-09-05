@@ -98,6 +98,8 @@ the host permissions already granted.
   extension does not know whether a permission prompt was approved or whether a returned value was
   useful to the page.
 - `chrome.storage.session` is browser-session storage. Closing a tab removes its DomainScan state.
+- A prerendered page is not recorded: its requests belong to a page the tab is not showing, and there
+  is no honest place to put them until it is opened.
 - A service worker request is only attributable while a tab shows its origin. What a worker does with
   no such tab open — a push, a background sync — is not recorded, because there is no tab to record it
   for.

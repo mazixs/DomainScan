@@ -78,6 +78,12 @@ session all still match. This is deliberate — do not "simplify" it, or a late 
 previous site lands under the new one. Each hostname retains **all** observed IPs with
 first/last/count.
 
+**Request attribution is strict by design:** ignore any request whose `documentLifecycle` is not
+`active` (unload beacons of the previous page, prerender); let an `outermost_frame` request whose
+`initiator` disagrees with the tab's `siteKey` correct the site (a missed commit); never let a
+navigation whose request errored become the site. Loosening any of these mixes two sites in one record
+— the failure users notice first.
+
 **Service-worker traffic:** Chrome reports `tabId -1` for a request a worker makes, including when it
 serves a fetch the page made — measured, not assumed. Such requests are attributed by `initiator`
 **origin** (never by `siteKey`, or one site's worker would land under another of its hosts) to every

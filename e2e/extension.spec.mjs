@@ -114,6 +114,22 @@ test.beforeAll(async () => {
         </script>`);
       return;
     }
+    if (request.url === '/beacon') {
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
+    if (request.url === '/leaving') {
+      response.setHeader('Content-Type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html>
+        <title>leaving</title>
+        <script>
+          addEventListener('pagehide', () => {
+            navigator.sendBeacon(${JSON.stringify(url('analytics.alpha.test', '/beacon'))}, 'bye');
+          });
+        </script>`);
+      return;
+    }
     if (request.url === '/download') {
       response.setHeader('Content-Type', 'application/octet-stream');
       response.setHeader('Content-Disposition', 'attachment; filename="file.bin"');
@@ -467,4 +483,18 @@ test('watching page API use can be switched off and back on', async () => {
   await watchedPanel.close();
   await watched.close();
   await page.close();
+});
+
+test('what the page being left sends on its way out stays out of the next site', async () => {
+  const page = await context.newPage();
+  await page.goto(url('leaving.alpha.test', '/leaving'));
+  await page.goto(url('arrival.gamma.test'));
+  const panel = await openPanelFor(page);
+
+  await expect(panel.locator('#site-host')).toHaveText('arrival.gamma.test');
+  await expect(panel.locator('#list')).toContainText('cdn.arrival.gamma.test');
+  await expect(panel.locator('#list')).not.toContainText('analytics.alpha.test');
+  await expect(panel.locator('#list')).not.toContainText('leaving.alpha.test');
+  await page.close();
+  await panel.close();
 });

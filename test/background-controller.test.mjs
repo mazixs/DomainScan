@@ -1027,3 +1027,136 @@ test('a signal from an excluded site is refused even if something still reports 
 
   assert.deepEqual(controller.getState(84).fingerprint.signals, {});
 });
+
+test('a request from a document that is being torn down belongs to no site', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 91, 'https://one.alpha.test/');
+  await controller.flush();
+  navigate(chrome, 91, 'https://one.gamma.test/');
+  await controller.flush();
+
+  // The page being left fires its beacon after the new page has committed.
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: 91,
+    url: 'https://analytics.alpha.test/collect',
+    type: 'ping',
+    requestId: 'unload-beacon',
+    initiator: 'https://one.alpha.test',
+    frameType: 'outermost_frame',
+    documentLifecycle: 'pending_deletion'
+  });
+  await controller.flush();
+
+  assert.equal(controller.getState(91).destinations['host|analytics.alpha.test'], undefined);
+});
+
+test('a prerendered page contacts destinations for a tab that is not showing it', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 92, 'https://one.alpha.test/');
+  await controller.flush();
+
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: 92,
+    url: 'https://cdn.gamma.test/app.js',
+    type: 'script',
+    requestId: 'prerender-request',
+    initiator: 'https://one.gamma.test',
+    frameType: 'outermost_frame',
+    documentLifecycle: 'prerender'
+  });
+  await controller.flush();
+
+  assert.equal(controller.getState(92).destinations['host|cdn.gamma.test'], undefined);
+  assert.equal(controller.getState(92).siteKey, 'alpha.test');
+});
+
+test('a navigation that never loads leaves the site it failed to leave', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 93, 'https://one.alpha.test/');
+  request(chrome, 93, 'https://cdn.alpha.test/a.js');
+  await controller.flush();
+
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: 93,
+    url: 'https://does-not-resolve.invalid/',
+    type: 'main_frame',
+    requestId: 'failed-navigation'
+  });
+  chrome.webRequest.onErrorOccurred.emit({
+    tabId: 93,
+    url: 'https://does-not-resolve.invalid/',
+    type: 'main_frame',
+    requestId: 'failed-navigation',
+    error: 'net::ERR_NAME_NOT_RESOLVED'
+  });
+  // Chrome still reports the failed address as the tab URL of its error page.
+  chrome.tabs.onUpdated.emit(
+    93,
+    { url: 'https://does-not-resolve.invalid/', status: 'loading' },
+    { id: 93, url: 'https://does-not-resolve.invalid/' }
+  );
+  await controller.flush();
+
+  const state = controller.getState(93);
+  assert.equal(state.siteKey, 'alpha.test');
+  assert.equal(state.pageHost, 'one.alpha.test');
+  assert.ok(state.destinations['host|cdn.alpha.test'], 'the record of the site survives');
+  assert.ok(state.destinations['host|does-not-resolve.invalid'], 'the attempt itself stays visible');
+});
+
+test('a page reporting itself through its own requests corrects a missed navigation', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 94, 'https://one.alpha.test/');
+  request(chrome, 94, 'https://cdn.alpha.test/a.js');
+  await controller.flush();
+
+  // No commit arrives for the new page; its own request says where the tab is.
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: 94,
+    url: 'https://cdn.gamma.test/app.js',
+    type: 'script',
+    requestId: 'orphan-subresource',
+    initiator: 'https://one.gamma.test',
+    frameType: 'outermost_frame',
+    documentLifecycle: 'active'
+  });
+  await controller.flush();
+
+  const state = controller.getState(94);
+  assert.equal(state.siteKey, 'gamma.test');
+  assert.equal(state.pageHost, 'one.gamma.test');
+  assert.equal(state.destinations['host|cdn.alpha.test'], undefined, 'the previous site is not mixed in');
+  assert.ok(state.destinations['host|cdn.gamma.test']);
+});
+
+test('a third-party frame does not pass for a navigation', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 95, 'https://one.alpha.test/');
+  await controller.flush();
+
+  chrome.webRequest.onBeforeRequest.emit({
+    tabId: 95,
+    url: 'https://api.vendor.test/data',
+    type: 'xmlhttprequest',
+    requestId: 'frame-request',
+    initiator: 'https://widget.gamma.test',
+    frameType: 'sub_frame',
+    parentDocumentId: 'document-alpha',
+    documentLifecycle: 'active'
+  });
+  await controller.flush();
+
+  const state = controller.getState(95);
+  assert.equal(state.siteKey, 'alpha.test', 'a frame of another origin is part of this page');
+  assert.ok(state.destinations['host|api.vendor.test']);
+});

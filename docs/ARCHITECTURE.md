@@ -127,6 +127,20 @@ ID is correlated with the site sessions it was made from. `onResponseStarted` ma
 IP only if the request ID, tab, hostname, and site session still match. This prevents a late response
 from the previous site being attached to a new site session.
 
+Three rules decide whether a request belongs to the site a tab is showing, and they are deliberately
+strict — a record that mixes two sites is worse than a record that is short.
+
+- A request whose `documentLifecycle` is not `active` is ignored. The page being left still fires its
+  unload beacons after the next page has committed, and a prerendered page contacts destinations for a
+  page nobody is looking at; both used to land under the wrong site.
+- A request the top-level document makes carries that document's origin as `initiator`. When it
+  disagrees with the tab's site, the commit was missed, and the request — not the stale state — decides
+  the site. This is the only case where a request may change identity, and it is safe because such a
+  request comes *from* the document that is loaded.
+- A navigation whose request fails never becomes a site. Chrome leaves the failed address as the tab
+  URL of its error page, so without this a mistyped host would wipe the record of the site the user was
+  reading.
+
 A request a service worker makes carries no tab: Chrome reports `tabId -1` even when the worker is
 serving a request the page made, so on a worker-backed site most traffic would otherwise be invisible.
 Such a request is attributed by its `initiator` **origin** — not its site — to every tab currently
