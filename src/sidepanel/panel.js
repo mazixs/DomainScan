@@ -30,6 +30,7 @@ let settings = { observePageApis: true, excludedSites: [] };
 const ui = {
   mode: 'exact',        // 'exact' | 'collapse' | 'registrable'
   query: '',
+  showPorts: readPortPreference(),
   selected: Object.create(null), // rowKey -> display value
   connectionStatus: IS_DEMO ? 'connected' : 'connecting'
 };
@@ -62,6 +63,9 @@ const el = {
   modeLabel: document.getElementById('mode-label'),
   segButtons: Array.from(document.querySelectorAll('.seg-btn')),
   modeHelp: document.getElementById('mode-help'),
+  showPorts: document.getElementById('show-ports'),
+  showPortsLabel: document.getElementById('show-ports-label'),
+  portsHelp: document.getElementById('ports-help'),
   list: document.getElementById('list'),
   toast: document.getElementById('toast'),
   copyDomains: document.getElementById('copy-domains'),
@@ -107,6 +111,8 @@ function applyStaticStrings() {
   el.search.setAttribute('placeholder', t('searchPlaceholder'));
   el.search.setAttribute('aria-label', t('searchPlaceholder'));
   el.modeLabel.textContent = t('display');
+  el.showPortsLabel.textContent = t('showPorts');
+  el.portsHelp.textContent = t('portsHint');
   el.segButtons.forEach((b) => {
     b.textContent = t(MODE_SEG[b.dataset.mode]);
   });
@@ -133,9 +139,10 @@ function sampleState() {
     const id = kind + '|' + value;
     destinations[id] = {
       id, kind, value, party, requestTypes: [requestType], transports: [transport],
+      ports: [value === 'stream.media.test' ? 8443 : transport === 'http' ? 80 : 443],
       sources: value === 'analytics.vendor.test' ? ['page', 'worker'] : ['page'],
       ips: kind === 'host' && value === 'news.example'
-        ? { '203.0.113.10': { value: '203.0.113.10', firstSeen: base, lastSeen: base, count: 1 } }
+        ? { '203.0.113.10': { value: '203.0.113.10', ports: [443], firstSeen: base, lastSeen: base, count: 1 } }
         : {},
       firstSeen: base + i,
       lastSeen: base + i,
@@ -174,13 +181,17 @@ function destinationCount() {
  *   transports:string[], sources:string[], foldedFrom:?string, ips:string[], grouped:number}[]}
  */
 function buildRows() {
-  return buildDestinationRows(state, { mode: ui.mode, query: ui.query });
+  return buildDestinationRows(state, { mode: ui.mode, query: ui.query, showPorts: ui.showPorts });
 }
 
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
 function render() {
+  el.showPorts.checked = ui.showPorts;
+  el.portsHelp.hidden = !ui.showPorts;
+  el.copyDomains.textContent = t(ui.showPorts ? 'copyDomainsPorts' : 'copyDomains');
+  el.copyIps.textContent = t(ui.showPorts ? 'copyIpsPorts' : 'copyIps');
   const rows = buildRows();
   renderHeader();
   renderFingerprint();
@@ -693,7 +704,19 @@ function closeMenu(returnFocus) {
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
+function readPortPreference() {
+  try { return localStorage.getItem('domainscan.showPorts') === 'true'; }
+  catch (_error) { return false; }
+}
+
 function wireEvents() {
+  el.showPorts.addEventListener('change', () => {
+    ui.showPorts = el.showPorts.checked;
+    ui.selected = Object.create(null);
+    try { localStorage.setItem('domainscan.showPorts', String(ui.showPorts)); }
+    catch (_error) { /* The current view still works when storage is unavailable. */ }
+    render();
+  });
   // Search
   el.search.addEventListener('input', () => {
     ui.query = el.search.value;

@@ -1,3 +1,4 @@
+import { requestPort } from '../lib/ports.js';
 import {
   PORT_NAME,
   MSG,
@@ -313,6 +314,7 @@ export function createBackgroundController(
       pendingNavigations.set(tabId, {
         host: normalizeHostname(parsed.hostname),
         transport: transportFromUrl(parsed),
+        port: requestPort(parsed),
         requestId: typeof requestId === 'string' ? requestId : null,
         documentId: typeof documentId === 'string' ? documentId : null,
         ip: null
@@ -336,6 +338,7 @@ export function createBackgroundController(
       party: classifyParty(parsed.hostname, state.pageHost),
       requestType: mapRequestType(type),
       transport: transportFromUrl(parsed),
+      port: requestPort(parsed),
       source: 'page'
     }, now()));
   }
@@ -383,6 +386,7 @@ export function createBackgroundController(
         party: classifyParty(parsed.hostname, state.pageHost),
         requestType: mapRequestType(type),
         transport: transportFromUrl(parsed),
+        port: requestPort(parsed),
         source: 'worker'
       }, now()));
     }
@@ -421,9 +425,10 @@ export function createBackgroundController(
         party: classifyParty(host, state.pageHost),
         requestType: 'document',
         transport: committed.transport,
+        port: committed.port,
         source: 'page'
       }, now());
-      if (committed.ip) state = recordResolvedIp(state, host, committed.ip, now());
+      if (committed.ip) state = recordResolvedIp(state, host, committed.ip, now(), committed.port);
     }
 
     // Every commit replaces the document a page signal may come from.
@@ -469,7 +474,7 @@ export function createBackgroundController(
       if (Number.isInteger(tabId) && tabId >= 0 && target.tabId !== tabId) continue;
       const state = tabs.get(target.tabId);
       if (!state || state.paused || state.siteKey !== target.siteKey) continue;
-      const next = recordResolvedIp(state, parsed.hostname, ip, now());
+      const next = recordResolvedIp(state, parsed.hostname, ip, now(), requestPort(parsed));
       if (next !== state) commit(next);
     }
   }

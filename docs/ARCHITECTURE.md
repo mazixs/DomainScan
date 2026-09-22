@@ -264,3 +264,18 @@ Pull requests verify and package but never release. A push to `main` releases on
 verification succeeds. Packaging uses an allowlist, rejects symbolic links, validates the ZIP, and
 includes PSL attribution/source. Only the release job receives `contents: write`, and it downloads
 the already verified artifact instead of executing repository code.
+
+### Optional destination ports
+
+Each destination retains a deduplicated `ports` array of URL ports and `portDetails`
+keyed by port for request types, transports and sources. Each resolved IP has its own
+`ports` array, populated only from that IP's response URL. This avoids forming false
+IP/port pairs when a host uses different servers on different ports. Ports survive
+session-state normalization; legacy records get empty arrays, never inferred ports.
+The default ports are HTTP/WS 80, HTTPS/WSS 443 and FTP 21; an unknown scheme without
+an explicit port stays unknown. These are URL ports, not measured socket ports.
+
+The panel's local `domainscan.showPorts` preference defaults to false. When enabled,
+view rows are split by port before domain grouping, and all copy actions use the
+shown address format. IPv6 ports are bracketed. Toggling clears selection because
+row identities change. Capture always retains ports regardless of this preference.

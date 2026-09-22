@@ -1,23 +1,18 @@
+import { normalizePorts, withPort } from '../lib/ports.js';
 import { foldSubdomain, registrableDomain } from '../lib/domain.js';
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
-function destinationIps(destination) {
-  if (destination.kind === 'ip') return [destination.value];
-  return unique(Object.values(destination.ips || {}).map((address) => address && address.value));
-}
-
-function sourceDestinations(state, query) {
-  const normalizedQuery = String(query || '').trim().toLowerCase();
-  return Object.values((state && state.destinations) || {})
-    .sort((a, b) => a.firstSeen - b.firstSeen)
-    .filter((destination) => {
-      if (!normalizedQuery) return true;
-      return destination.value.toLowerCase().includes(normalizedQuery) ||
-        destinationIps(destination).some((ip) => ip.includes(normalizedQuery));
-    });
+function destinationIps(destination, port, showPorts) {
+  if (destination.kind === 'ip') return [withPort(destination.value, port)];
+  return unique(Object.values(destination.ips || {}).flatMap((address) => {
+    if (!address || !address.value) return [];
+    const ports = normalizePorts(address.ports);
+    if (!showPorts || ports.length === 0) return [address.value];
+    return ports.includes(port) ? [withPort(address.value, port)] : [];
+  }));
 }
 
 function displayValue(destination, mode) {
@@ -27,25 +22,34 @@ function displayValue(destination, mode) {
   return destination.value;
 }
 
-export function buildDestinationRows(state, { mode = 'exact', query = '' } = {}) {
-  const destinations = sourceDestinations(state, query);
+export function buildDestinationRows(state, { mode = 'exact', query = '', showPorts = false } = {}) {
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  const destinations = Object.values((state && state.destinations) || {})
+    .sort((a, b) => a.firstSeen - b.firstSeen)
+    .flatMap((destination) => {
+      const ports = showPorts ? normalizePorts(destination.ports) : [];
+      return (ports.length ? ports : [null]).map((port) => ({ destination, port }));
+    });
   const rows = [];
   const groupedRows = new Map();
 
-  for (const destination of destinations) {
-    const display = displayValue(destination, mode);
+  for (const { destination, port } of destinations) {
+    const evidence = (port != null && destination.portDetails?.[port]) || destination;
+    const display = withPort(displayValue(destination, mode), port);
+    const ips = destinationIps(destination, port, showPorts);
+    if (normalizedQuery && !withPort(destination.value, port).toLowerCase().includes(normalizedQuery) &&
+        !ips.some((ip) => ip.includes(normalizedQuery))) continue;
     const key = mode === 'registrable'
       ? `registrable|${destination.kind}|${display}`
-      : `${mode}|${destination.id}`;
-    const ips = destinationIps(destination);
+      : `${mode}|${destination.id}${port == null ? '' : `|${port}`}`;
     const existing = mode === 'registrable' ? groupedRows.get(key) : null;
 
     if (existing) {
       existing.grouped += 1;
       existing.ips = unique([...existing.ips, ...ips]);
-      existing.requestTypes = unique([...existing.requestTypes, ...(destination.requestTypes || [])]);
-      existing.transports = unique([...existing.transports, ...(destination.transports || [])]);
-      existing.sources = unique([...existing.sources, ...(destination.sources || [])]);
+      existing.requestTypes = unique([...existing.requestTypes, ...(evidence.requestTypes || [])]);
+      existing.transports = unique([...existing.transports, ...(evidence.transports || [])]);
+      existing.sources = unique([...existing.sources, ...(evidence.sources || [])]);
       if (destination.party === 'third') existing.party = 'third';
       continue;
     }
@@ -55,12 +59,13 @@ export function buildDestinationRows(state, { mode = 'exact', query = '' } = {})
       display,
       // The host a folded row stands for. A grouped row stands for several, so it
       // names none of them and says how many instead.
-      foldedFrom: mode === 'collapse' && display !== destination.value ? destination.value : null,
+      foldedFrom: mode === 'collapse' && displayValue(destination, mode) !== destination.value
+        ? withPort(destination.value, port) : null,
       kind: destination.kind,
       party: destination.party,
-      requestTypes: unique(destination.requestTypes || []),
-      transports: unique(destination.transports || []),
-      sources: unique(destination.sources || []),
+      requestTypes: unique(evidence.requestTypes || []),
+      transports: unique(evidence.transports || []),
+      sources: unique(evidence.sources || []),
       grouped: 1,
       ips
     };

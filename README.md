@@ -35,6 +35,13 @@ a page reads.
 - **One record per tab, per site.** Paths and subdomains keep accumulating; moving to another
   registrable domain starts a fresh record without touching the other tabs.
 
+Enable **Show ports** below the display modes when you need `host:port` or `IP:port`.
+The choice is remembered, and search and all copy actions follow the displayed format.
+Different ports remain separate even in the grouped view; IPv6 uses `[address]:port`.
+Ports come from request URLs (including protocol defaults such as HTTPS 443), not from
+socket telemetry. Old records with no port remain unchanged. Arbitrary TCP/UDP traffic
+is outside the browser's `webRequest` API.
+
 ## Install
 
 > [!NOTE]

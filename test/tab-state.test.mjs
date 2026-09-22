@@ -87,6 +87,7 @@ test('resolved IP history retains unique addresses and occurrence counts', () =>
   assert.deepEqual(Object.keys(ips), ['203.0.113.10', '203.0.113.11']);
   assert.deepEqual(ips['203.0.113.10'], {
     value: '203.0.113.10',
+    ports: [],
     firstSeen: 103,
     lastSeen: 105,
     count: 2

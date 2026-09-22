@@ -1160,3 +1160,26 @@ test('a third-party frame does not pass for a navigation', async () => {
   assert.equal(state.siteKey, 'alpha.test', 'a frame of another origin is part of this page');
   assert.ok(state.destinations['host|api.vendor.test']);
 });
+
+test('captures URL ports for committed navigation, page and worker requests with IP association', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 71 });
+  const navigation = request(chrome, 71, 'https://site.example:8443/', 'main_frame');
+  chrome.webRequest.onResponseStarted.emit({ tabId: 71, requestId: navigation, url: 'https://site.example:8443/', ip: '192.0.2.10' });
+  chrome.tabs.onUpdated.emit(71, { url: 'https://site.example:8443/', status: 'loading' });
+  request(chrome, 71, 'wss://socket.example:9443/', 'websocket');
+  request(chrome, 71, 'https://socket.example/', 'xmlhttprequest');
+  chrome.webRequest.onBeforeRequest.emit({ tabId: -1, requestId: 'port-worker', url: 'http://worker.example:8080/', initiator: 'https://site.example:8443', type: 'xmlhttprequest' });
+  chrome.webRequest.onResponseStarted.emit({ tabId: -1, requestId: 'port-worker', url: 'http://worker.example:8080/', ip: '2001:db8::1' });
+  await controller.flush();
+  const destinations = lastState(port).destinations;
+  assert.deepEqual(destinations['host|site.example'].ports, [8443]);
+  assert.deepEqual(destinations['host|site.example'].ips['192.0.2.10'].ports, [8443]);
+  assert.deepEqual(destinations['host|socket.example'].ports, [9443, 443]);
+  assert.deepEqual(destinations['host|worker.example'].ports, [8080]);
+  assert.deepEqual(destinations['host|worker.example'].ips['2001:db8::1'].ports, [8080]);
+});

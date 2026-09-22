@@ -3,6 +3,11 @@
 // The keys here MUST match _locales/en/messages.json exactly.
 
 export const FALLBACK_EN = {
+  showPorts: "Show ports",
+  portsHint: "Ports from request URLs. Unknown ports stay blank; these are not measured socket ports.",
+  copyDomainsPorts: "Copy domains with ports",
+  copyIpsPorts: "Copy IPs with ports",
+
   appName: 'DomainScan',
   appDesc: 'See and copy the network destinations each browser tab contacts.',
   actionTitle: 'Open DomainScan',

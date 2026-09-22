@@ -1,4 +1,8 @@
 {
+  "showPorts": { "message": "Показывать порты" },
+  "portsHint": { "message": "Порты из URL запросов. Неизвестные порты не добавляются. Это не измеренные порты соединений." },
+  "copyDomainsPorts": { "message": "Домены с портами" },
+  "copyIpsPorts": { "message": "IP с портами" },
   "appName": { "message": "DomainScan" },
   "appDesc": { "message": "Смотрите и копируйте сетевые адреса, к которым обращается каждая вкладка браузера." },
   "actionTitle": { "message": "Открыть DomainScan" },

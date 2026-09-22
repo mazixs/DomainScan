@@ -373,3 +373,6 @@ a:focus-visible,button:focus-visible,input:focus-visible,
   .site-host{font-size:17px}
   .seg-btn{font-size:12px}
 }
+
+.ports-option{display:flex;align-items:center;gap:7px;margin-top:8px;font-size:12px;color:var(--ink-2);cursor:pointer}
+.ports-option input{margin:0;accent-color:var(--accent-ink)}

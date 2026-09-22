@@ -535,3 +535,42 @@ test('a page that keeps reading its canvas is warned about by Chrome, not about 
   await page.close();
   await panel.close();
 });
+
+test('optional ports are displayed, searched, copied and remembered', async () => {
+  const page = await context.newPage();
+  await page.goto(url('ports.alpha.test'));
+  const panel = await openPanelFor(page);
+  await panel.setViewportSize({ width: 360, height: 800 });
+  await expect(panel.locator('#site-host')).toHaveText('ports.alpha.test');
+  await panel.locator('#show-ports').check();
+  await expect(panel.locator('.host').filter({ hasText: `ports.alpha.test:${port}` })).toBeVisible();
+  await panel.locator('#search').fill(`ports.alpha.test:${port}`);
+  await expect(panel.locator('.host')).toHaveCount(1);
+  await expect(panel.locator('.ip-addresses')).toContainText(`127.0.0.1:${port}`);
+  await panel.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { async writeText(text) { globalThis.__domainscanCopiedText = text; } }
+    });
+  });
+  for (const [button, expected] of [
+    ['#copy-domains', `ports.alpha.test:${port}`],
+    ['#copy-ips', `127.0.0.1:${port}`],
+    ['.copy-btn', `ports.alpha.test:${port}`]
+  ]) {
+    await panel.locator(button).click();
+    await expect.poll(() => panel.evaluate(() => globalThis.__domainscanCopiedText)).toBe(expected);
+  }
+  await panel.locator('.cb').check();
+  await panel.locator('#copy-selected').click();
+  await expect.poll(() => panel.evaluate(() => globalThis.__domainscanCopiedText)).toBe(`ports.alpha.test:${port}`);
+  await panel.locator('.ip-details summary').click();
+  await panel.screenshot({ path: 'output/playwright/ports-enabled.png', fullPage: true });
+  expect(await panel.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await panel.reload();
+  await page.bringToFront();
+  await expect(panel.locator('#show-ports')).toBeChecked();
+  await expect(panel.locator('.host').filter({ hasText: `ports.alpha.test:${port}` })).toBeVisible();
+  await panel.locator('#show-ports').uncheck();
+  await expect(panel.locator('.host').filter({ hasText: 'ports.alpha.test' })).toHaveText('ports.alpha.test');
+});

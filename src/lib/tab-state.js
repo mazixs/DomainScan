@@ -1,3 +1,4 @@
+import { normalizePorts } from './ports.js';
 import {
   isIpLiteral,
   normalizeHostname,
@@ -78,6 +79,7 @@ export function recordDestination(state, observation, now = Date.now()) {
   const destination = existing
     ? {
         ...existing,
+        ports: normalizePorts([...(existing.ports || []), observation.port]),
         requestTypes: withObserved(existing.requestTypes, observation.requestType, REQUEST_TYPES, 'other'),
         transports: withObserved(existing.transports, observation.transport, TRANSPORTS, 'other'),
         sources: withObserved(existing.sources, observation.source, SOURCES, 'page'),
@@ -89,6 +91,7 @@ export function recordDestination(state, observation, now = Date.now()) {
         kind,
         value,
         party: observation.party,
+        ports: normalizePorts([observation.port]),
         requestTypes: withObserved([], observation.requestType, REQUEST_TYPES, 'other'),
         transports: withObserved([], observation.transport, TRANSPORTS, 'other'),
         sources: withObserved([], observation.source, SOURCES, 'page'),
@@ -97,6 +100,18 @@ export function recordDestination(state, observation, now = Date.now()) {
         lastSeen: now,
         count: 1
       };
+
+  // Keep row metadata tied to its port instead of assigning HTTP/worker evidence
+  // from one connection to every port used by the same hostname.
+  destination.portDetails = { ...(existing?.portDetails || {}) };
+  for (const port of normalizePorts([observation.port])) {
+    const previous = destination.portDetails[port] || {};
+    destination.portDetails[port] = {
+      requestTypes: withObserved(previous.requestTypes, observation.requestType, REQUEST_TYPES, 'other'),
+      transports: withObserved(previous.transports, observation.transport, TRANSPORTS, 'other'),
+      sources: withObserved(previous.sources, observation.source, SOURCES, 'page')
+    };
+  }
 
   return {
     ...state,
@@ -126,7 +141,7 @@ function withObserved(list, value, allowed, fallback) {
   return known.includes(observed) ? known : [...known, observed];
 }
 
-export function recordResolvedIp(state, host, ip, now = Date.now()) {
+export function recordResolvedIp(state, host, ip, now = Date.now(), port = null) {
   const rawValue = normalizeHostname(host);
   const value = normalizeIpLiteral(rawValue) || rawValue;
   const normalizedIp = normalizeIpLiteral(ip);
@@ -140,11 +155,13 @@ export function recordResolvedIp(state, host, ip, now = Date.now()) {
   const address = existing
     ? {
         ...existing,
+        ports: normalizePorts([...(existing.ports || []), port]),
         lastSeen: now,
         count: existing.count + 1
       }
     : {
         value: normalizedIp,
+        ports: normalizePorts([port]),
         firstSeen: now,
         lastSeen: now,
         count: 1
@@ -226,6 +243,7 @@ function normalizeIpHistory(destination) {
     if (!value) continue;
     ips[value] = {
       value,
+      ports: normalizePorts(source.ports),
       firstSeen: Number.isFinite(source.firstSeen) ? source.firstSeen : destination.firstSeen,
       lastSeen: Number.isFinite(source.lastSeen) ? source.lastSeen : destination.lastSeen,
       count: Number.isFinite(source.count) && source.count > 0 ? source.count : 1
@@ -236,6 +254,7 @@ function normalizeIpHistory(destination) {
   if (legacyIp && !ips[legacyIp]) {
     ips[legacyIp] = {
       value: legacyIp,
+      ports: [],
       firstSeen: destination.firstSeen,
       lastSeen: destination.lastSeen,
       count: 1
@@ -308,6 +327,14 @@ export function normalizeTabState(value, now = Date.now()) {
       kind,
       value,
       party: kind === 'ip' ? 'ip' : candidate.party || 'third',
+      ports: normalizePorts(candidate.ports),
+      portDetails: Object.fromEntries(normalizePorts(candidate.ports)
+        .filter((port) => candidate.portDetails?.[port])
+        .map((port) => [port, {
+          requestTypes: normalizeObserved(candidate.portDetails[port].requestTypes, REQUEST_TYPES, 'other'),
+          transports: normalizeObserved(candidate.portDetails[port].transports, TRANSPORTS, 'other'),
+          sources: normalizeObserved(candidate.portDetails[port].sources, SOURCES, 'page')
+        }])),
       requestTypes: normalizeObserved(
         Array.isArray(candidate.requestTypes) ? candidate.requestTypes : [candidate.requestType],
         REQUEST_TYPES,
