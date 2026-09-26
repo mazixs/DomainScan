@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildDestinationRows,
+  captureCheckpoint,
   collectVisibleDomains,
   collectVisibleIps
 } from '../src/sidepanel/view-model.js';
@@ -63,6 +64,77 @@ test('registrable view groups subdomains and merges resolved addresses', () => {
   assert.equal(rows[0].grouped, 2);
   assert.deepEqual(rows[0].ips, ['203.0.113.10', '2001:db8::10', '203.0.113.11']);
   assert.deepEqual(rows[0].requestTypes, ['script', 'image']);
+  assert.deepEqual(rows[0].members.map((member) => member.value), [
+    'cdn.news.example.co.uk', 'img.news.example.co.uk'
+  ]);
+});
+
+test('filters apply to exact destinations before domain grouping and copying', () => {
+  const state = stateWithDestinations();
+  state.destinations['host|cdn.news.example.co.uk'].transports = ['http'];
+  state.destinations['host|img.news.example.co.uk'].transports = ['https'];
+  state.destinations['host|cdn.news.example.co.uk'].sources = ['worker'];
+  state.destinations['host|img.news.example.co.uk'].sources = ['page'];
+
+  const rows = buildDestinationRows(state, {
+    mode: 'registrable',
+    filters: { party: 'first', feature: 'unencrypted', requestType: 'script' }
+  });
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0].members.map((member) => member.value), ['cdn.news.example.co.uk']);
+  assert.deepEqual(collectVisibleIps(rows), ['203.0.113.10', '2001:db8::10']);
+  assert.equal(buildDestinationRows(state, { filters: { feature: 'worker' } }).length, 1);
+});
+
+test('checkpoint shows new and repeated requests, including the exact port', () => {
+  const state = {
+    tabId: 1, siteKey: 'example.test', siteStartedAt: 10,
+    destinations: {
+      'host|a.example.test': {
+        id: 'host|a.example.test', kind: 'host', value: 'a.example.test', party: 'first',
+        firstSeen: 11, count: 2, ports: [443], requestTypes: ['fetch'],
+        portDetails: {
+          443: { count: 2, requestTypes: ['fetch'], transports: ['https'], sources: ['page'] }
+        }, ips: {}
+      }
+    }
+  };
+  const checkpoint = captureCheckpoint(state);
+  assert.deepEqual(buildDestinationRows(state, { checkpoint, showPorts: true }), []);
+
+  state.destinations['host|a.example.test'].count = 4;
+  state.destinations['host|a.example.test'].ports.push(8443);
+  state.destinations['host|a.example.test'].portDetails[443].count = 3;
+  state.destinations['host|a.example.test'].portDetails[8443] = {
+    count: 1, requestTypes: ['fetch'], transports: ['https'], sources: ['page']
+  };
+  state.destinations['host|b.example.test'] = {
+    id: 'host|b.example.test', kind: 'host', value: 'b.example.test', party: 'first',
+    firstSeen: 12, count: 1, requestTypes: ['image'], ports: [], ips: {}
+  };
+  const rows = buildDestinationRows(state, { checkpoint, showPorts: true, mode: 'registrable' });
+  assert.deepEqual(rows.map((row) => row.display), ['example.test:443', 'example.test:8443', 'example.test']);
+  assert.deepEqual(rows.map((row) => row.changeStatus), ['repeat', 'new', 'new']);
+  assert.deepEqual(rows.map((row) => row.changeCount), [1, 1, 1]);
+});
+
+test('a transport filter never attributes one URL port to another', () => {
+  const state = {
+    destinations: {
+      'host|api.example.test': {
+        id: 'host|api.example.test', kind: 'host', value: 'api.example.test', party: 'third',
+        firstSeen: 1, count: 2, ports: [80, 443], requestTypes: ['fetch'], transports: ['http', 'https'],
+        portDetails: {
+          80: { count: 1, requestTypes: ['fetch'], transports: ['http'], sources: ['page'] },
+          443: { count: 1, requestTypes: ['fetch'], transports: ['https'], sources: ['page'] }
+        }, ips: {}
+      }
+    }
+  };
+  const rows = buildDestinationRows(state, {
+    showPorts: true, filters: { feature: 'unencrypted' }
+  });
+  assert.deepEqual(rows.map((row) => row.display), ['api.example.test:80']);
 });
 
 test('bulk IP copy includes resolved and direct addresses exactly once', () => {

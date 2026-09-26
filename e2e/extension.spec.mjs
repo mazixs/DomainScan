@@ -574,3 +574,88 @@ test('optional ports are displayed, searched, copied and remembered', async () =
   await panel.locator('#show-ports').uncheck();
   await expect(panel.locator('.host').filter({ hasText: 'ports.alpha.test' })).toHaveText('ports.alpha.test');
 });
+
+test('domain groups reveal exact hosts and filters narrow before grouping', async () => {
+  const page = await context.newPage();
+  await page.goto(url('one.deep.alpha.test', '/deep'));
+  const panel = await openPanelFor(page);
+  await panel.setViewportSize({ width: 360, height: 800 });
+  await expect(panel.locator('#list')).toContainText('img.deep.alpha.test');
+  await page.evaluate((target) => fetch(target), url('cdn.vendor.test', '/asset'));
+  await expect(panel.locator('#list')).toContainText('cdn.vendor.test');
+
+  await panel.locator('.seg-btn[data-mode="registrable"]').click();
+  const ownGroup = panel.locator('#list li.row').filter({ has: panel.locator('.host', { hasText: 'alpha.test' }) });
+  await ownGroup.locator('.members-details summary').click();
+  await expect(ownGroup.locator('.members-list')).toContainText('img.deep.alpha.test');
+  await expect(ownGroup.locator('.members-list')).toContainText('js.deep.alpha.test');
+
+  await panel.locator('#filters summary').click();
+  await panel.locator('#party-filter').selectOption('third');
+  await expect(panel.locator('#list li.row .host')).toHaveText(['vendor.test']);
+  const vendorGroup = panel.locator('#list li.row');
+  await vendorGroup.locator('.members-details summary').click();
+  await expect(vendorGroup.locator('.members-list')).toContainText('cdn.vendor.test');
+  await panel.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { async writeText(text) { globalThis.__domainscanCopiedText = text; } }
+    });
+  });
+  await vendorGroup.locator('.member-copy').click();
+  await expect.poll(() => panel.evaluate(() => globalThis.__domainscanCopiedText)).toBe('cdn.vendor.test');
+
+  await panel.locator('#feature-filter').selectOption('unencrypted');
+  await panel.locator('#type-filter').selectOption('fetch');
+  await expect(panel.locator('#list li.row .host')).toHaveText(['vendor.test']);
+  await panel.locator('#type-filter').selectOption('websocket');
+  await expect(panel.locator('#list li.row')).toHaveCount(0);
+  await panel.locator('#reset-filters').click();
+  await expect(panel.locator('#list li.row')).not.toHaveCount(0);
+  await panel.screenshot({ path: 'output/playwright/filters-and-groups.png', fullPage: true });
+  expect(await panel.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.close();
+  await panel.close();
+});
+
+test('marker separates repeated requests from new destinations', async () => {
+  const page = await context.newPage();
+  await page.goto(url('marker.alpha.test'));
+  const panel = await openPanelFor(page);
+  await expect(panel.locator('#list')).toContainText('cdn.alpha.test');
+  await panel.locator('#checkpoint-btn').click();
+  await expect(panel.locator('#checkpoint-status')).toContainText(/Since|С /);
+  await expect(panel.locator('#list li.row')).toHaveCount(0);
+
+  await page.evaluate(async (targets) => {
+    await Promise.all(targets.map((target) => fetch(target)));
+  }, [url('cdn.alpha.test', '/asset'), url('fresh.alpha.test', '/asset')]);
+  const repeated = panel.locator('#list li.row').filter({ hasText: 'cdn.alpha.test' });
+  const fresh = panel.locator('#list li.row').filter({ hasText: 'fresh.alpha.test' });
+  await expect(repeated.locator('.change-mark')).toContainText(/again|повтор/);
+  await expect(fresh.locator('.change-mark')).toContainText(/new|новый/);
+  await panel.locator('#checkpoint-btn').click();
+  await expect(panel.locator('#list')).toContainText('marker.alpha.test');
+  await page.close();
+  await panel.close();
+});
+
+test('long histories page the visible rows without losing captured destinations', async () => {
+  const page = await context.newPage();
+  await page.goto(url('long.alpha.test'));
+  const panel = await openPanelFor(page);
+  await expect(panel.locator('#list')).toContainText('cdn.alpha.test');
+  await page.evaluate(async (serverPort) => {
+    await Promise.all(Array.from({ length: 205 }, (_, index) =>
+      fetch(`http://bulk${index}.alpha.test:${serverPort}/asset`)));
+  }, port);
+
+  await expect(panel.locator('#site-count b')).toHaveText(/2\d\d/);
+  await expect(panel.locator('#list li.row')).toHaveCount(200);
+  await expect(panel.locator('#show-more')).toBeVisible();
+  await panel.locator('#show-more').click();
+  await expect(panel.locator('#list li.row')).toHaveCount(207);
+  await expect(panel.locator('#show-more')).toBeHidden();
+  await page.close();
+  await panel.close();
+});

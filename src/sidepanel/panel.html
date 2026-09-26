@@ -73,6 +73,13 @@
       </aside>
 
       <div class="controls">
+        <aside class="storage-note" id="storage-note" role="status" hidden>
+          <p id="storage-message"></p>
+          <div class="storage-actions">
+            <button type="button" id="export-record"></button>
+            <button type="button" id="storage-clear"></button>
+          </div>
+        </aside>
         <label class="search">
           <span class="sr-only" id="search-label"></span>
           <span class="si" aria-hidden="true">
@@ -99,7 +106,25 @@
         </div>
       </div>
 
+      <div class="inspection-tools">
+        <details class="filters" id="filters">
+          <summary id="filters-label"></summary>
+          <div class="filter-grid">
+            <label><span id="party-filter-label"></span><select id="party-filter"></select></label>
+            <label><span id="feature-filter-label"></span><select id="feature-filter"></select></label>
+            <label><span id="type-filter-label"></span><select id="type-filter"></select></label>
+          </div>
+          <button type="button" class="text-action" id="reset-filters"></button>
+        </details>
+
+        <div class="checkpoint">
+          <button type="button" id="checkpoint-btn"></button>
+          <p id="checkpoint-status" role="status"></p>
+        </div>
+      </div>
+
       <ul class="list" id="list"></ul>
+      <button type="button" class="show-more" id="show-more" hidden></button>
 
     </main>
 

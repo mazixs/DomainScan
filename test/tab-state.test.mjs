@@ -75,6 +75,19 @@ test('each tab starts with independent destination storage', () => {
   assert.deepEqual(second.destinations, {});
 });
 
+test('per-port request counts survive normalization for checkpoint comparisons', () => {
+  let state = makeTabState(3, 100);
+  state = recordDestination(state, { ...hostObservation('cdn.example.com'), port: 443 }, 101);
+  state = recordDestination(state, { ...hostObservation('cdn.example.com'), port: 443 }, 102);
+  state = recordDestination(state, { ...hostObservation('cdn.example.com'), port: 8443 }, 103);
+  const current = state.destinations['host|cdn.example.com'];
+  assert.equal(current.portDetails[443].count, 2);
+  assert.equal(current.portDetails[8443].count, 1);
+  const restored = normalizeTabState(state);
+  assert.equal(restored.destinations['host|cdn.example.com'].portDetails[443].count, 2);
+  assert.equal(restored.destinations['host|cdn.example.com'].portDetails[8443].count, 1);
+});
+
 test('resolved IP history retains unique addresses and occurrence counts', () => {
   let state = makeTabState(4, 100);
   state = applyTopLevelNavigation(state, 'https://example.com/', 101);

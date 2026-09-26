@@ -104,6 +104,7 @@ export function createBackgroundController(
   const portBindings = new Map();
   const subscribers = new Map();
   const persistence = new Map();
+  const failedWrites = new Set();
   const requestSites = new Map();
   const currentDocuments = new Map();
   const pendingNavigations = new Map();
@@ -213,7 +214,14 @@ export function createBackgroundController(
     const previous = persistence.get(state.tabId) || Promise.resolve();
     const next = previous
       .then(() => chromeApi.storage.session.set({ [tabKey(state.tabId)]: state }))
-      .catch((error) => diagnose('storage.session.set', error, state.tabId));
+      .then(() => {
+        if (failedWrites.delete(state.tabId)) pushState(state.tabId);
+      })
+      .catch((error) => {
+        diagnose('storage.session.set', error, state.tabId);
+        failedWrites.add(state.tabId);
+        pushState(state.tabId);
+      });
     persistence.set(state.tabId, next);
   }
 
@@ -222,7 +230,7 @@ export function createBackgroundController(
     if (!state) return;
     for (const port of subscribers.get(tabId) || []) {
       try {
-        port.postMessage({ type: MSG.STATE, state, settings });
+        port.postMessage({ type: MSG.STATE, state, settings, storageWriteFailed: failedWrites.has(tabId) });
       } catch (error) {
         diagnose('port.postMessage', error, tabId);
       }
@@ -280,7 +288,7 @@ export function createBackgroundController(
       subscribers.set(tabId, ports);
     }
     ports.add(port);
-    port.postMessage({ type: MSG.STATE, state: getOrCreate(tabId), settings });
+    port.postMessage({ type: MSG.STATE, state: getOrCreate(tabId), settings, storageWriteFailed: failedWrites.has(tabId) });
   }
 
   function onBeforeRequest(details) {
@@ -526,7 +534,13 @@ export function createBackgroundController(
         const tabId = portBindings.get(port);
         if (tabId == null) return;
         const state = getOrCreate(tabId);
-        if (message.type === MSG.SET_PAUSED) {
+        if (message.type === MSG.CHECKPOINT_REQUEST) {
+          try {
+            port.postMessage({ type: MSG.CHECKPOINT_READY, tabId, state, at: now() });
+          } catch (error) {
+            diagnose('port.postMessage', error, tabId);
+          }
+        } else if (message.type === MSG.SET_PAUSED) {
           commit({ ...state, paused: !!message.paused, updatedAt: now() }, { immediate: true });
         } else if (message.type === MSG.SET_SITE_OBSERVED) {
           const siteKey = state.siteKey;
@@ -633,6 +647,7 @@ export function createBackgroundController(
       }
       const pendingWrite = persistence.get(tabId);
       if (pendingWrite) await pendingWrite;
+      failedWrites.delete(tabId);
       await chromeApi.storage.session.remove(tabKey(tabId));
       persistence.delete(tabId);
     });

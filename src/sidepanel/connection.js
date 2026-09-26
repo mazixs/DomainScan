@@ -3,6 +3,7 @@ import { PORT_NAME, MSG } from '../common/messages.js';
 export function createPanelConnection({
   chromeApi,
   onState,
+  onCheckpoint = () => {},
   onConnectionChange = () => {},
   onError = () => {},
   setTimeoutFn = setTimeout,
@@ -73,7 +74,10 @@ export function createPanelConnection({
           } else if (tabId !== boundTabId) {
             return;
           }
-          onState(message.state, message.settings);
+          onState(message.state, message.settings, message.storageWriteFailed === true);
+        } else if (message && message.type === MSG.CHECKPOINT_READY &&
+                   message.tabId === boundTabId && !binding && pendingTabId == null) {
+          onCheckpoint(message.state, message.at);
         }
       });
       connectedPort.onDisconnect.addListener(() => {

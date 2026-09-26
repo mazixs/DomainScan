@@ -22,7 +22,43 @@ function displayValue(destination, mode) {
   return destination.value;
 }
 
-export function buildDestinationRows(state, { mode = 'exact', query = '', showPorts = false } = {}) {
+export function captureCheckpoint(state, at = Date.now()) {
+  return {
+    tabId: state.tabId,
+    siteKey: state.siteKey,
+    siteStartedAt: state.siteStartedAt,
+    at,
+    counts: Object.fromEntries(Object.values(state.destinations || {}).map((destination) => [
+      destination.id,
+      {
+        total: destination.count || 0,
+        ports: Object.fromEntries(Object.entries(destination.portDetails || {}).map(([port, detail]) => [
+          port, detail.count || 0
+        ]))
+      }
+    ]))
+  };
+}
+
+function checkpointChange(destination, port, checkpoint) {
+  if (!checkpoint) return null;
+  const before = checkpoint.counts[destination.id];
+  const current = port == null ? destination.count || 0 : destination.portDetails?.[port]?.count || 0;
+  const previous = port == null ? before?.total || 0 : before?.ports?.[port] || 0;
+  if (current <= previous) return null;
+  return { status: before && (port == null || before.ports?.[port] != null) ? 'repeat' : 'new', count: current - previous };
+}
+
+function matchesFilters(destination, evidence, filters) {
+  if (filters.party && filters.party !== 'all' && destination.party !== filters.party) return false;
+  if (filters.feature === 'websocket' && !(evidence.requestTypes || []).includes('websocket')) return false;
+  if (filters.feature === 'unencrypted' && !(evidence.transports || []).some((value) => value === 'http' || value === 'ws')) return false;
+  if (filters.feature === 'worker' && !(evidence.sources || []).includes('worker')) return false;
+  if (filters.requestType && filters.requestType !== 'all' && !(evidence.requestTypes || []).includes(filters.requestType)) return false;
+  return true;
+}
+
+export function buildDestinationRows(state, { mode = 'exact', query = '', showPorts = false, filters = {}, checkpoint = null } = {}) {
   const normalizedQuery = String(query || '').trim().toLowerCase();
   const destinations = Object.values((state && state.destinations) || {})
     .sort((a, b) => a.firstSeen - b.firstSeen)
@@ -37,6 +73,9 @@ export function buildDestinationRows(state, { mode = 'exact', query = '', showPo
     const evidence = (port != null && destination.portDetails?.[port]) || destination;
     const display = withPort(displayValue(destination, mode), port);
     const ips = destinationIps(destination, port, showPorts);
+    if (!matchesFilters(destination, evidence, filters)) continue;
+    const change = checkpointChange(destination, port, checkpoint);
+    if (checkpoint && !change) continue;
     if (normalizedQuery && !withPort(destination.value, port).toLowerCase().includes(normalizedQuery) &&
         !ips.some((ip) => ip.includes(normalizedQuery))) continue;
     const key = mode === 'registrable'
@@ -46,6 +85,9 @@ export function buildDestinationRows(state, { mode = 'exact', query = '', showPo
 
     if (existing) {
       existing.grouped += 1;
+      existing.members.push({ value: withPort(destination.value, port), change });
+      existing.changeCount += change?.count || 0;
+      if (change?.status === 'new') existing.changeStatus = 'new';
       existing.ips = unique([...existing.ips, ...ips]);
       existing.requestTypes = unique([...existing.requestTypes, ...(evidence.requestTypes || [])]);
       existing.transports = unique([...existing.transports, ...(evidence.transports || [])]);
@@ -67,6 +109,9 @@ export function buildDestinationRows(state, { mode = 'exact', query = '', showPo
       transports: unique(evidence.transports || []),
       sources: unique(evidence.sources || []),
       grouped: 1,
+      members: [{ value: withPort(destination.value, port), change }],
+      changeCount: change?.count || 0,
+      changeStatus: change?.status || null,
       ips
     };
     rows.push(row);

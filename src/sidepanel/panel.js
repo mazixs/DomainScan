@@ -9,6 +9,7 @@ import { summarizeFingerprint } from '../lib/fingerprint.js';
 import { createPanelConnection } from './connection.js';
 import {
   buildDestinationRows,
+  captureCheckpoint,
   collectVisibleDomains,
   collectVisibleIps
 } from './view-model.js';
@@ -25,11 +26,19 @@ let state = null;
 
 // What the extension is currently allowed to observe in pages. Sent with every STATE.
 let settings = { observePageApis: true, excludedSites: [] };
+const PAGE_SIZE = 200;
 
 // UI-local state (never sent to the background).
 const ui = {
   mode: 'exact',        // 'exact' | 'collapse' | 'registrable'
   query: '',
+  filters: { party: 'all', feature: 'all', requestType: 'all' },
+  checkpoint: null,
+  checkpointPending: false,
+  visibleLimit: PAGE_SIZE,
+  storageUsedBytes: null,
+  storageWriteFailed: false,
+  lastStorageCheck: 0,
   showPorts: readPortPreference(),
   selected: Object.create(null), // rowKey -> display value
   connectionStatus: IS_DEMO ? 'connected' : 'connecting'
@@ -66,7 +75,23 @@ const el = {
   showPorts: document.getElementById('show-ports'),
   showPortsLabel: document.getElementById('show-ports-label'),
   portsHelp: document.getElementById('ports-help'),
+  filters: document.getElementById('filters'),
+  filtersLabel: document.getElementById('filters-label'),
+  partyFilterLabel: document.getElementById('party-filter-label'),
+  partyFilter: document.getElementById('party-filter'),
+  featureFilterLabel: document.getElementById('feature-filter-label'),
+  featureFilter: document.getElementById('feature-filter'),
+  typeFilterLabel: document.getElementById('type-filter-label'),
+  typeFilter: document.getElementById('type-filter'),
+  resetFilters: document.getElementById('reset-filters'),
+  checkpointBtn: document.getElementById('checkpoint-btn'),
+  checkpointStatus: document.getElementById('checkpoint-status'),
+  storageNote: document.getElementById('storage-note'),
+  storageMessage: document.getElementById('storage-message'),
+  exportRecord: document.getElementById('export-record'),
+  storageClear: document.getElementById('storage-clear'),
   list: document.getElementById('list'),
+  showMore: document.getElementById('show-more'),
   toast: document.getElementById('toast'),
   copyDomains: document.getElementById('copy-domains'),
   copyIps: document.getElementById('copy-ips'),
@@ -113,11 +138,37 @@ function applyStaticStrings() {
   el.modeLabel.textContent = t('display');
   el.showPortsLabel.textContent = t('showPorts');
   el.portsHelp.textContent = t('portsHint');
+  el.partyFilterLabel.textContent = t('partyFilter');
+  el.featureFilterLabel.textContent = t('featureFilter');
+  el.typeFilterLabel.textContent = t('typeFilter');
+  el.resetFilters.textContent = t('resetFilters');
+  el.exportRecord.textContent = t('exportRecord');
+  el.storageClear.textContent = t('storageClear');
+  fillOptions(el.partyFilter, [
+    ['all', 'filterAll'], ['first', 'filterFirst'], ['third', 'filterThird'], ['ip', 'filterDirectIp']
+  ]);
+  fillOptions(el.featureFilter, [
+    ['all', 'filterAll'], ['websocket', 'filterWebsocket'],
+    ['unencrypted', 'filterUnencrypted'], ['worker', 'filterWorker']
+  ]);
+  fillOptions(el.typeFilter, [
+    ['all', 'filterAll'], ...['document', 'image', 'script', 'style', 'fetch', 'beacon', 'media', 'font', 'websocket', 'other']
+      .map((value) => [value, 'requestType_' + value])
+  ]);
   el.segButtons.forEach((b) => {
     b.textContent = t(MODE_SEG[b.dataset.mode]);
   });
   el.copyDomains.textContent = t('copyDomains');
   el.copyIps.textContent = t('copyIps');
+}
+
+function fillOptions(select, entries) {
+  for (const [value, key] of entries) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = t(key);
+    select.appendChild(option);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -137,10 +188,13 @@ function sampleState() {
   const destinations = Object.create(null);
   defs.forEach(([kind, value, party, requestType, transport], i) => {
     const id = kind + '|' + value;
+    const port = value === 'stream.media.test' ? 8443 : transport === 'http' ? 80 : 443;
+    const sources = value === 'analytics.vendor.test' ? ['page', 'worker'] : ['page'];
     destinations[id] = {
       id, kind, value, party, requestTypes: [requestType], transports: [transport],
-      ports: [value === 'stream.media.test' ? 8443 : transport === 'http' ? 80 : 443],
-      sources: value === 'analytics.vendor.test' ? ['page', 'worker'] : ['page'],
+      ports: [port],
+      portDetails: { [port]: { count: 1, requestTypes: [requestType], transports: [transport], sources } },
+      sources,
       ips: kind === 'host' && value === 'news.example'
         ? { '203.0.113.10': { value: '203.0.113.10', ports: [443], firstSeen: base, lastSeen: base, count: 1 } }
         : {},
@@ -174,6 +228,11 @@ function destinationCount() {
   return state && state.destinations ? Object.keys(state.destinations).length : 0;
 }
 
+function hasEvidence() {
+  return destinationCount() > 0 ||
+    Object.keys(state?.fingerprint?.signals || {}).length > 0;
+}
+
 /**
  * Rows for the current view (mode + search). Modes transform the VIEW only —
  * nothing in state.destinations is mutated or removed.
@@ -181,7 +240,14 @@ function destinationCount() {
  *   transports:string[], sources:string[], foldedFrom:?string, ips:string[], grouped:number}[]}
  */
 function buildRows() {
-  return buildDestinationRows(state, { mode: ui.mode, query: ui.query, showPorts: ui.showPorts });
+  return buildDestinationRows(state, {
+    mode: ui.mode, query: ui.query, showPorts: ui.showPorts,
+    filters: ui.filters, checkpoint: ui.checkpoint
+  });
+}
+
+function shownRows() {
+  return buildRows().slice(0, ui.visibleLimit);
 }
 
 // ---------------------------------------------------------------------------
@@ -193,10 +259,18 @@ function render() {
   el.copyDomains.textContent = t(ui.showPorts ? 'copyDomainsPorts' : 'copyDomains');
   el.copyIps.textContent = t(ui.showPorts ? 'copyIpsPorts' : 'copyIps');
   const rows = buildRows();
+  const visible = rows.slice(0, ui.visibleLimit);
   renderHeader();
   renderFingerprint();
-  renderModeHelp(rows);
-  renderList(rows);
+  renderModeHelp(visible.length, rows.length);
+  renderFilters();
+  renderCheckpoint();
+  renderStorageWarning();
+  renderList(visible);
+  el.showMore.hidden = rows.length <= visible.length;
+  if (!el.showMore.hidden) {
+    el.showMore.textContent = t('showMore', { count: Math.min(PAGE_SIZE, rows.length - visible.length) });
+  }
   updateCopySelected();
 }
 
@@ -233,7 +307,8 @@ function formatTime(timestamp) {
   try {
     return new Date(timestamp).toLocaleTimeString(document.documentElement.lang || undefined, {
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
+      hour12: false
     });
   } catch (_error) {
     return new Date(timestamp).toTimeString().slice(0, 5);
@@ -295,13 +370,54 @@ function renderFingerprint() {
   }
 }
 
-function renderModeHelp(rows) {
-  const count = rows.length;
+function renderModeHelp(shown, total) {
   el.modeHelp.textContent = '';
   el.modeHelp.append(
     t(MODE_HINT[ui.mode]) + ' ',
-    hint(t('showingDestinations', { count }))
+    hint(total > shown
+      ? t('showingPartial', { count: shown, total })
+      : t('showingDestinations', { count: shown }))
   );
+}
+
+function renderFilters() {
+  const active = Object.values(ui.filters).filter((value) => value !== 'all').length;
+  el.filtersLabel.textContent = t('filters') + (active ? ` (${active})` : '');
+  el.resetFilters.disabled = active === 0;
+}
+
+function renderCheckpoint() {
+  el.checkpointBtn.disabled = !state || !state.siteKey || ui.checkpointPending ||
+    (!IS_DEMO && ui.connectionStatus !== 'connected');
+  el.checkpointBtn.textContent = t(ui.checkpointPending ? 'checkpointPending'
+    : ui.checkpoint ? 'checkpointReset' : 'checkpointStart');
+  el.checkpointStatus.textContent = ui.checkpoint
+    ? t('checkpointAt', { time: formatTime(ui.checkpoint.at) }) : '';
+}
+
+function renderStorageWarning() {
+  const quota = !IS_DEMO && chrome.storage?.session?.QUOTA_BYTES || 10 * 1024 * 1024;
+  const percent = Number.isFinite(ui.storageUsedBytes)
+    ? Math.round(ui.storageUsedBytes / quota * 100) : 0;
+  el.storageNote.hidden = !ui.storageWriteFailed && (percent < 80 || !hasEvidence());
+  if (!el.storageNote.hidden) {
+    el.storageMessage.textContent = ui.storageWriteFailed
+      ? t('storageFailed') : t('storageNear', { percent });
+  }
+  el.exportRecord.disabled = !hasEvidence();
+  el.storageClear.disabled = !hasEvidence();
+}
+
+async function refreshStorageUsage() {
+  if (IS_DEMO || typeof chrome.storage?.session?.getBytesInUse !== 'function') return;
+  if (Date.now() - ui.lastStorageCheck < 5000) return;
+  ui.lastStorageCheck = Date.now();
+  try {
+    ui.storageUsedBytes = await chrome.storage.session.getBytesInUse(null);
+    renderStorageWarning();
+  } catch (_error) {
+    // The explicit write-failure signal still warns when persistence fails.
+  }
 }
 
 function hint(text) {
@@ -354,8 +470,8 @@ function emptyRow() {
     b.textContent = t('emptyTitle');
     li.append(b, t('emptyBody'));
   } else {
-    // No destinations match the current search. Communicated with existing strings only.
-    li.textContent = t('showingDestinations', { count: 0 });
+    li.textContent = ui.checkpoint && !ui.query && Object.values(ui.filters).every((value) => value === 'all')
+      ? t('checkpointEmpty') : t('showingDestinations', { count: 0 });
   }
   return li;
 }
@@ -431,7 +547,9 @@ function updateRowNode(li, row) {
     row.transports.join(','),
     row.sources.join(','),
     row.foldedFrom || '',
-    row.grouped
+    row.grouped,
+    row.changeStatus || '',
+    row.changeCount
   ].join('|');
   if (li.dataset.sub !== subSignature) {
     li.dataset.sub = subSignature;
@@ -495,14 +613,84 @@ function updateRowNode(li, row) {
       g.textContent = '\u00d7' + row.grouped;
       sub.appendChild(g);
     }
+    if (row.changeStatus) {
+      sub.appendChild(sep());
+      const mark = document.createElement('span');
+      mark.className = 'change-mark';
+      mark.textContent = t(row.changeStatus === 'new' ? 'checkpointNew' : 'checkpointRepeat', {
+        count: row.changeCount
+      });
+      sub.appendChild(mark);
+    }
   }
 
+  updateRowMembers(li, row);
   updateRowAddresses(li, isIp ? [] : row.ips);
 
   const copy = li.querySelector('.copy-btn');
   copy.dataset.value = row.display;
   copy.dataset.kind = row.kind;
   copy.setAttribute('aria-label', t('copyRow', { host: row.display }));
+}
+
+function updateRowMembers(li, row) {
+  const members = row.members || [];
+  const needed = ui.mode === 'registrable' && row.kind === 'host' &&
+    (members.length > 1 || members[0]?.value !== row.display);
+  let details = li.querySelector('.members-details');
+  if (!needed) {
+    if (details) details.remove();
+    return;
+  }
+  if (!details) {
+    details = document.createElement('details');
+    details.className = 'members-details';
+    details.append(document.createElement('summary'), document.createElement('ul'));
+    details.querySelector('ul').className = 'members-list';
+    li.querySelector('.row-main').appendChild(details);
+  }
+  details.querySelector('summary').textContent = t('observedHosts', { count: members.length });
+  const signature = members.map((member) => [member.value, member.change?.status, member.change?.count].join('|')).join(';');
+  if (details.dataset.members === signature) return;
+  details.dataset.members = signature;
+  const list = details.querySelector('ul');
+  const known = new Map(Array.from(list.children).map((item) => [item.dataset.value, item]));
+  let cursor = list.firstChild;
+  for (const member of members) {
+    let item = known.get(member.value);
+    if (item) {
+      known.delete(member.value);
+    } else {
+      item = document.createElement('li');
+      item.dataset.value = member.value;
+      const address = document.createElement('code');
+      address.textContent = member.value;
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'member-copy';
+      copy.dataset.value = member.value;
+      copy.dataset.kind = 'host';
+      copy.textContent = t('copy');
+      copy.setAttribute('aria-label', t('copyRow', { host: member.value }));
+      item.append(address, copy);
+    }
+    let change = item.querySelector('.change-mark');
+    if (member.change) {
+      if (!change) {
+        change = document.createElement('span');
+        change.className = 'change-mark';
+        item.insertBefore(change, item.querySelector('button'));
+      }
+      change.textContent = t(member.change.status === 'new' ? 'checkpointNew' : 'checkpointRepeat', {
+        count: member.change.count
+      });
+    } else if (change) {
+      change.remove();
+    }
+    if (item === cursor) cursor = cursor.nextSibling;
+    else list.insertBefore(item, cursor);
+  }
+  for (const item of known.values()) item.remove();
 }
 
 function updateRowAddresses(li, addresses) {
@@ -634,8 +822,31 @@ async function copyBulk(values, copiedKey) {
 
 // current visible rows split by kind
 function visibleByKind(kind) {
-  const rows = buildRows();
+  const rows = shownRows();
   return kind === 'ip' ? collectVisibleIps(rows) : collectVisibleDomains(rows);
+}
+
+function exportRecord() {
+  if (!state || !hasEvidence()) return;
+  try {
+    const content = JSON.stringify({
+      format: 'domainscan-record', version: 1,
+      exportedAt: new Date().toISOString(),
+      storageWriteFailed: ui.storageWriteFailed,
+      record: state
+    }, null, 2);
+    const blobUrl = URL.createObjectURL(new Blob([content], { type: 'application/json' }));
+    const link = document.createElement('a');
+    const host = (state.pageHost || 'tab').replace(/[^a-z0-9.-]/gi, '_');
+    link.href = blobUrl;
+    link.download = `domainscan-${host}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+  } catch (_error) {
+    announce(t('exportFailed'));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -675,6 +886,8 @@ function setSiteObserved(observed) {
 
 function clearTab() {
   ui.selected = Object.create(null);
+  ui.checkpoint = null;
+  ui.visibleLimit = PAGE_SIZE;
   if (IS_DEMO) {
     if (state) { state.destinations = Object.create(null); }
     render();
@@ -713,6 +926,7 @@ function wireEvents() {
   el.showPorts.addEventListener('change', () => {
     ui.showPorts = el.showPorts.checked;
     ui.selected = Object.create(null);
+    ui.visibleLimit = PAGE_SIZE;
     try { localStorage.setItem('domainscan.showPorts', String(ui.showPorts)); }
     catch (_error) { /* The current view still works when storage is unavailable. */ }
     render();
@@ -720,10 +934,55 @@ function wireEvents() {
   // Search
   el.search.addEventListener('input', () => {
     ui.query = el.search.value;
-    const rows = buildRows();
-    renderList(rows);
-    renderModeHelp(rows);
+    ui.selected = Object.create(null);
+    ui.visibleLimit = PAGE_SIZE;
+    render();
   });
+
+  for (const [element, key] of [
+    [el.partyFilter, 'party'], [el.featureFilter, 'feature'], [el.typeFilter, 'requestType']
+  ]) {
+    element.addEventListener('change', () => {
+      ui.filters[key] = element.value;
+      ui.selected = Object.create(null);
+      ui.visibleLimit = PAGE_SIZE;
+      render();
+    });
+  }
+  el.resetFilters.addEventListener('click', () => {
+    ui.filters = { party: 'all', feature: 'all', requestType: 'all' };
+    el.partyFilter.value = 'all';
+    el.featureFilter.value = 'all';
+    el.typeFilter.value = 'all';
+    el.filters.open = false;
+    ui.selected = Object.create(null);
+    ui.visibleLimit = PAGE_SIZE;
+    render();
+  });
+  el.checkpointBtn.addEventListener('click', () => {
+    if (ui.checkpoint) {
+      ui.checkpoint = null;
+      ui.selected = Object.create(null);
+      ui.visibleLimit = PAGE_SIZE;
+      render();
+    } else if (IS_DEMO) {
+      ui.checkpoint = captureCheckpoint(state);
+      ui.selected = Object.create(null);
+      ui.visibleLimit = PAGE_SIZE;
+      render();
+    } else if (connection?.post({ type: MSG.CHECKPOINT_REQUEST })) {
+      ui.checkpointPending = true;
+      renderCheckpoint();
+    }
+  });
+  el.showMore.addEventListener('click', () => {
+    const firstNew = ui.visibleLimit;
+    ui.visibleLimit += PAGE_SIZE;
+    render();
+    if (el.showMore.hidden) el.list.children[firstNew]?.querySelector('.cb')?.focus();
+  });
+  el.exportRecord.addEventListener('click', exportRecord);
+  el.storageClear.addEventListener('click', clearTab);
 
   // Display modes
   el.segButtons.forEach((btn) => {
@@ -732,6 +991,7 @@ function wireEvents() {
       if (mode === ui.mode) return;
       ui.mode = mode;
       ui.selected = Object.create(null); // row keys change meaning between modes
+      ui.visibleLimit = PAGE_SIZE;
       el.segButtons.forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
       render();
     });
@@ -739,13 +999,15 @@ function wireEvents() {
 
   // List: per-row copy + selection (delegated)
   el.list.addEventListener('click', (e) => {
-    const btn = e.target.closest('.copy-btn');
+    const btn = e.target.closest('.copy-btn, .member-copy');
     if (!btn) return;
     const value = btn.dataset.value;
     copyText(value).then((ok) => {
       if (ok) {
-        btn.classList.add('copied');
-        setTimeout(() => btn.classList.remove('copied'), 1500);
+        if (btn.classList.contains('copy-btn')) {
+          btn.classList.add('copied');
+          setTimeout(() => btn.classList.remove('copied'), 1500);
+        }
         announce(t(btn.dataset.kind === 'ip' ? 'copiedIps' : 'copiedDomains', { count: 1 }));
       } else {
         announce(t('copyEmpty'));
@@ -815,11 +1077,16 @@ function wireEvents() {
 function connectLive() {
   connection = createPanelConnection({
     chromeApi: chrome,
-    onState(nextState, nextSettings) {
-      if (!state || state.tabId !== nextState.tabId || state.siteKey !== nextState.siteKey) {
+    onState(nextState, nextSettings, storageWriteFailed) {
+      if (!state || state.tabId !== nextState.tabId || state.siteKey !== nextState.siteKey ||
+          state.siteStartedAt !== nextState.siteStartedAt) {
         ui.selected = Object.create(null);
+        ui.checkpoint = null;
+        ui.checkpointPending = false;
+        ui.visibleLimit = PAGE_SIZE;
       }
       state = nextState;
+      ui.storageWriteFailed = storageWriteFailed;
       if (nextSettings) {
         settings = {
           observePageApis: nextSettings.observePageApis !== false,
@@ -827,10 +1094,27 @@ function connectLive() {
         };
       }
       render();
+      refreshStorageUsage();
+    },
+    onCheckpoint(checkpointState, at) {
+      ui.checkpointPending = false;
+      if (!state || !checkpointState || state.tabId !== checkpointState.tabId ||
+          state.siteKey !== checkpointState.siteKey ||
+          state.siteStartedAt !== checkpointState.siteStartedAt) {
+        renderCheckpoint();
+        return;
+      }
+      ui.checkpoint = captureCheckpoint(checkpointState, at);
+      if ((state.updatedAt || 0) <= (checkpointState.updatedAt || 0)) state = checkpointState;
+      ui.selected = Object.create(null);
+      ui.visibleLimit = PAGE_SIZE;
+      render();
     },
     onConnectionChange(status) {
       ui.connectionStatus = status;
+      if (status !== 'connected') ui.checkpointPending = false;
       renderHeader();
+      renderCheckpoint();
     },
     onError() {
       // Connection recovery is automatic; keep the last rendered state visible.

@@ -107,6 +107,7 @@ export function recordDestination(state, observation, now = Date.now()) {
   for (const port of normalizePorts([observation.port])) {
     const previous = destination.portDetails[port] || {};
     destination.portDetails[port] = {
+      count: (previous.count || 0) + 1,
       requestTypes: withObserved(previous.requestTypes, observation.requestType, REQUEST_TYPES, 'other'),
       transports: withObserved(previous.transports, observation.transport, TRANSPORTS, 'other'),
       sources: withObserved(previous.sources, observation.source, SOURCES, 'page')
@@ -331,6 +332,8 @@ export function normalizeTabState(value, now = Date.now()) {
       portDetails: Object.fromEntries(normalizePorts(candidate.ports)
         .filter((port) => candidate.portDetails?.[port])
         .map((port) => [port, {
+          count: Number.isFinite(candidate.portDetails[port].count)
+            ? candidate.portDetails[port].count : 0,
           requestTypes: normalizeObserved(candidate.portDetails[port].requestTypes, REQUEST_TYPES, 'other'),
           transports: normalizeObserved(candidate.portDetails[port].transports, TRANSPORTS, 'other'),
           sources: normalizeObserved(candidate.portDetails[port].sources, SOURCES, 'page')

@@ -227,8 +227,10 @@ never assigns a numeric risk score.
 `src/common/messages.js` defines:
 
 - port: `domainscan`;
-- panel messages: `HELLO`, `SET_PAUSED`, `CLEAR`, `SET_OBSERVE_PAGE_APIS`, `SET_SITE_OBSERVED`;
-- background message: `STATE`, which carries the tab state and the current settings;
+- panel messages: `HELLO`, `SET_PAUSED`, `CLEAR`, `CHECKPOINT_REQUEST`,
+  `SET_OBSERVE_PAGE_APIS`, `SET_SITE_OBSERVED`;
+- background messages: `STATE`, which carries the tab state, current settings and persistence status;
+  `CHECKPOINT_READY`, which carries the authoritative tab state at the marker;
 - content message: `FINGERPRINT`.
 
 Settings live in `chrome.storage.local` under `settings`: `observePageApis` and `excludedSites` (site
@@ -279,3 +281,24 @@ The panel's local `domainscan.showPorts` preference defaults to false. When enab
 view rows are split by port before domain grouping, and all copy actions use the
 shown address format. IPv6 ports are bracketed. Toggling clears selection because
 row identities change. Capture always retains ports regardless of this preference.
+
+## Filtered inspection and long records
+
+Filtering by origin, feature and request type happens on each exact destination before domain
+grouping. A grouped row keeps its matching exact hostnames in an expandable list, with an individual
+copy action for each. Search and copy use the filtered view. The DOM renders at most 200 rows at a
+time; "Show next" reveals more, and bulk copy covers the rows currently shown. This is view
+pagination: no observations are removed from the tab state.
+
+A panel-local checkpoint requests a state snapshot from the background event queue, so requests
+already processed when the marker is placed cannot arrive later as false new evidence. It snapshots
+each destination's request count and each known URL-port count.
+Subsequent rows include only new destinations and repeat requests, with per-port changes kept apart.
+The checkpoint is cleared when the tab or site session changes and when this tab is cleared. It is
+not persisted beyond the open panel.
+
+The panel periodically reads `storage.session.getBytesInUse(null)` and warns at 80% of the session
+quota. A failed session write is also sent to the panel by the controller, so an unsaved live state
+cannot appear safely stored. The user can export that tab's full current state as JSON before
+clearing it. No automatic truncation or background export occurs; beyond the quota, live capture
+continues but recent observations can be lost on a service worker restart.

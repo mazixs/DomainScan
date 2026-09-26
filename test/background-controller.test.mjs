@@ -377,6 +377,51 @@ test('tab removal waits for an in-flight state write before deleting storage', a
   assert.equal(chrome.storageData['tab:17'], undefined);
 });
 
+test('panel is warned of a failed session write and informed after recovery', async () => {
+  const chrome = fakeChrome();
+  let failWrite = true;
+  const actualSet = chrome.storage.session.set.bind(chrome.storage.session);
+  chrome.storage.session.set = async (values) => {
+    if (failWrite) throw new Error('quota exceeded');
+    return actualSet(values);
+  };
+  const controller = createBackgroundController(chrome, { logger: { warn() {} } });
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 21 });
+  await controller.flush();
+
+  port.receive({ type: MSG.SET_PAUSED, paused: true });
+  await controller.flush();
+  assert.equal(port.sent.at(-1).storageWriteFailed, true);
+
+  failWrite = false;
+  port.receive({ type: MSG.SET_PAUSED, paused: false });
+  await controller.flush();
+  assert.equal(port.sent.at(-1).storageWriteFailed, false);
+});
+
+test('checkpoint response includes requests queued before the marker', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome, { now: () => 500 });
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 22 });
+  navigate(chrome, 22, 'https://example.com/');
+  request(chrome, 22, 'https://cdn.vendor.test/one.js');
+  port.receive({ type: MSG.CHECKPOINT_REQUEST });
+  request(chrome, 22, 'https://cdn.vendor.test/two.js');
+  await controller.flush();
+
+  const marker = port.sent.find((message) => message.type === MSG.CHECKPOINT_READY);
+  assert.equal(marker.tabId, 22);
+  assert.equal(marker.at, 500);
+  assert.equal(marker.state.destinations['host|cdn.vendor.test'].count, 1);
+  assert.equal(controller.getState(22).destinations['host|cdn.vendor.test'].count, 2);
+});
+
 test('rehydration completes before queued capture and migrates legacy state', async () => {
   const chrome = fakeChrome({
     'tab:4': {

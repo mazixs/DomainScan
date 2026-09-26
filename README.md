@@ -60,6 +60,15 @@ Chrome 114 or newer is required.
 The list fills as you browse and never rearranges itself under your hands: an open list of IP
 addresses, the focused control and the scroll position survive every incoming request.
 
+In **Domains** view, expand "Observed hosts" to inspect and copy the exact hostnames behind a
+group. Filters narrow the list by origin, feature (WebSocket, unencrypted request or service worker)
+and request type before grouping; search and copy actions use the filtered rows. "Mark now" shows
+new destinations and repeat requests observed after that point in the current site session.
+
+Long lists show 200 rows at a time without discarding observations. If session storage nears its
+limit or a write fails, the panel offers a JSON export of the current tab and an explicit clear
+action. The export is user initiated and stays on the user's computer.
+
 Three display modes transform the view, and none of them deletes anything:
 
 | Subdomains folded into the parent | Grouped by registrable domain |

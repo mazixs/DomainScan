@@ -89,6 +89,20 @@ test('connection binds on start and rebinds when the active tab changes', async 
   connection.stop();
 });
 
+test('checkpoint replies are accepted only for the bound tab', async () => {
+  const chrome = fakeChrome(10);
+  const seen = [];
+  const connection = createPanelConnection({
+    chromeApi: chrome, onState() {}, onCheckpoint: (state, at) => seen.push([state.tabId, at])
+  });
+  await settle();
+  chrome.ports[0].onMessage.emit({ type: MSG.STATE, state: { tabId: 10 } });
+  chrome.ports[0].onMessage.emit({ type: MSG.CHECKPOINT_READY, tabId: 9, state: { tabId: 9 }, at: 1 });
+  chrome.ports[0].onMessage.emit({ type: MSG.CHECKPOINT_READY, tabId: 10, state: { tabId: 10 }, at: 2 });
+  assert.deepEqual(seen, [[10, 2]]);
+  connection.stop();
+});
+
 test('disconnect schedules bounded reconnection and rebinds the current tab', async () => {
   const chrome = fakeChrome(20);
   const timers = [];

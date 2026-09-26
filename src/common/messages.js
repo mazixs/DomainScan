@@ -9,6 +9,8 @@ export const MSG = {
   STATE: 'STATE',            // bg -> panel  { type, state: TabState, settings: Settings }
   SET_PAUSED: 'SET_PAUSED',  // panel -> bg  { type, paused: boolean }
   CLEAR: 'CLEAR',            // panel -> bg  { type }
+  CHECKPOINT_REQUEST: 'CHECKPOINT_REQUEST', // panel -> bg { type }
+  CHECKPOINT_READY: 'CHECKPOINT_READY',     // bg -> panel { type, tabId, state, at }
   // panel -> bg  { type, enabled: boolean } — page API observation as a whole
   SET_OBSERVE_PAGE_APIS: 'SET_OBSERVE_PAGE_APIS',
   // panel -> bg  { type, observed: boolean } — the site of the bound tab only
