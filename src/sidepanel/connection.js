@@ -74,7 +74,7 @@ export function createPanelConnection({
           } else if (tabId !== boundTabId) {
             return;
           }
-          onState(message.state, message.settings, message.storageWriteFailed === true);
+          onState(message.state, message.settings, message.storageWriteFailed === true, message.settingsError || null);
         } else if (message && message.type === MSG.CHECKPOINT_READY &&
                    message.tabId === boundTabId && !binding && pendingTabId == null) {
           onCheckpoint(message.state, message.at);

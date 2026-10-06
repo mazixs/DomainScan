@@ -10,13 +10,24 @@
 
   var reported = Object.create(null);
   var channel;
-  try {
-    channel = new MessageChannel();
+  function connectRelay() {
     window.dispatchEvent(new MessageEvent('domainscan:probe-channel', {
       data: { source: 'domainscan-probe' },
       ports: [channel.port2]
     }));
+  }
+  try {
+    channel = new MessageChannel();
+    // Dynamic scripts in different worlds may start in either order. The port
+    // queues early signals until the relay accepts it.
+    window.addEventListener('domainscan:relay-ready', connectRelay, { once: true });
+    channel.port1.onmessage = function () {
+      window.removeEventListener('domainscan:relay-ready', connectRelay);
+      channel.port1.onmessage = null;
+    };
+    connectRelay();
   } catch (error) {
+    window.removeEventListener('domainscan:relay-ready', connectRelay);
     return;
   }
 

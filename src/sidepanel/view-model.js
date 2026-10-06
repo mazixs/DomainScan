@@ -27,6 +27,7 @@ export function captureCheckpoint(state, at = Date.now()) {
     tabId: state.tabId,
     siteKey: state.siteKey,
     siteStartedAt: state.siteStartedAt,
+    recordGeneration: state.recordGeneration || 0,
     at,
     counts: Object.fromEntries(Object.values(state.destinations || {}).map((destination) => [
       destination.id,
@@ -59,6 +60,9 @@ function matchesFilters(destination, evidence, filters) {
 }
 
 export function buildDestinationRows(state, { mode = 'exact', query = '', showPorts = false, filters = {}, checkpoint = null } = {}) {
+  if (checkpoint && (checkpoint.tabId !== state?.tabId || checkpoint.siteKey !== state?.siteKey ||
+      checkpoint.siteStartedAt !== state?.siteStartedAt ||
+      checkpoint.recordGeneration !== (state?.recordGeneration || 0))) checkpoint = null;
   const normalizedQuery = String(query || '').trim().toLowerCase();
   const destinations = Object.values((state && state.destinations) || {})
     .sort((a, b) => a.firstSeen - b.firstSeen)
@@ -88,7 +92,7 @@ export function buildDestinationRows(state, { mode = 'exact', query = '', showPo
       existing.members.push({ value: withPort(destination.value, port), change });
       existing.changeCount += change?.count || 0;
       if (change?.status === 'new') existing.changeStatus = 'new';
-      existing.ips = unique([...existing.ips, ...ips]);
+      for (const ip of ips) existing.ipSet.add(ip);
       existing.requestTypes = unique([...existing.requestTypes, ...(evidence.requestTypes || [])]);
       existing.transports = unique([...existing.transports, ...(evidence.transports || [])]);
       existing.sources = unique([...existing.sources, ...(evidence.sources || [])]);
@@ -115,9 +119,16 @@ export function buildDestinationRows(state, { mode = 'exact', query = '', showPo
       ips
     };
     rows.push(row);
-    if (mode === 'registrable') groupedRows.set(key, row);
+    if (mode === 'registrable') {
+      row.ipSet = new Set(ips);
+      groupedRows.set(key, row);
+    }
   }
 
+  for (const row of groupedRows.values()) {
+    row.ips = [...row.ipSet];
+    delete row.ipSet;
+  }
   return rows;
 }
 

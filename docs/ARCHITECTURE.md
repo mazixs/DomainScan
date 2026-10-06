@@ -10,11 +10,11 @@ scripts observe a small allowlist of page API calls and send only signal names t
 
 The extension has four layers:
 
-1. `src/lib/`: pure normalization and immutable state transitions.
+1. `src/lib/`: pure normalization and immutable state transitions, plus an explicit per-tab
+   accumulator for private background drafts. Published snapshots stay immutable.
 2. `src/background/controller.js`: Chrome event adapter, persistence, and subscriptions.
-3. `src/content/`: MAIN-world instrumentation plus an ISOLATED-world relay. The relay is declared in
-   the manifest; the MAIN-world probe is registered at runtime with `chrome.scripting`, which is what
-   makes it switchable. Chrome keeps a registered script across browser restarts, so only the very
+3. `src/content/`: MAIN-world instrumentation plus an ISOLATED-world relay. Both scripts are registered
+   at runtime with `chrome.scripting`, with the relay first, so they share the same observation setting. Chrome keeps a registered script across browser restarts, so only the very
    first run after installation has a window in which a page can load before the probe exists.
 4. `src/sidepanel/`: active-tab connection, derived rows, rendering, and copy actions.
 
@@ -110,7 +110,8 @@ bounded backoff (250 ms up to 4 s) and binds the current active tab again.
   },
   paused: false,
   siteStartedAt: 1720000000000,
-  updatedAt: 1720000001000
+  updatedAt: 1720000001000,
+  recordGeneration: 0
 }
 ```
 
@@ -126,6 +127,8 @@ migrated by `normalizeTabState`.
 ID is correlated with the site sessions it was made from. `onResponseStarted` may add its normalized
 IP only if the request ID, tab, hostname, and site session still match. This prevents a late response
 from the previous site being attached to a new site session.
+The persisted `recordGeneration` changes on cross-site navigation, leaving the web, and clearing
+the record. Responses must match it as well as `siteKey`, including a return to the same site.
 
 Three rules decide whether a request belongs to the site a tab is showing, and they are deliberately
 strict — a record that mixes two sites is worse than a record that is short.
@@ -163,6 +166,8 @@ and removes duplicates.
 
 Pause suppresses new destinations, IPs, and page API signals. A main-frame navigation is still
 processed while paused so the panel never displays a previous site's evidence under a new host.
+Requests started while paused are not eligible for later IP enrichment after resuming, and a
+document requested during the pause is not retroactively captured when its navigation commits.
 
 ## Page API evidence
 
@@ -191,17 +196,21 @@ into it for everyone to see. Reading the unmasked WebGL renderer requires `getEx
 (`WEBGL_debug_renderer_info`) first, so asking for that extension is taken as the same evidence, which
 keeps this script out of `getParameter` — a call a render loop makes thousands of times.
 
-Instrumentation stays indistinguishable from the untouched browser. Each wrapper is a concise
+Instrumentation is observable and can affect site compatibility. Each wrapper is a concise
 method, so it has no own `prototype` and cannot be constructed, exactly like a native built-in.
 `Function.prototype.toString` is replaced once, before the first wrapper, and reports the source of
 the function a wrapper replaced; the replacement reports itself as native. Errors thrown by an
 instrumented API are rethrown with content-script frames removed, so a page never sees the
-extension ID in a stack. This is not cosmetic: a visible wrapper makes bot protections escalate a
-solvable check into a hard block, and it exposes the extension ID to any page. `e2e/extension.spec.mjs`
-guards all three properties.
+extension ID in the tested stacks. These checks preserve ordinary API behavior and reduce accidental
+stack exposure, but do not establish invisibility. A native `Function.prototype.toString` from a
+fresh realm exposes wrappers, and the page's own `toString` replacement remains for the document's
+lifetime. Site protections may reject this instrumentation; a compatibility regression test records
+these limits instead of claiming all detection is prevented.
 
-The ISOLATED relay registers first and accepts one synchronous `MessageChannel` from the MAIN probe
-at `document_start`; later replacement channels and ordinary page `postMessage` calls are ignored.
+The ISOLATED relay is registered before the MAIN probe, but execution order across worlds can vary.
+A readiness event connects the scripts in either order, and the `MessageChannel` queues early signals.
+An acknowledgement removes the temporary readiness listener. The relay accepts one channel at
+`document_start`; later replacement channels and ordinary page `postMessage` calls are ignored.
 It accepts each signal at most once per frame document and forwards nothing but the message type and
 the canonical signal name. The controller drops a message from a document that is not
 `active` (a back-forward-cached, prerendered or dying document is not what the tab shows), binds the
@@ -229,16 +238,26 @@ never assigns a numeric risk score.
 - port: `domainscan`;
 - panel messages: `HELLO`, `SET_PAUSED`, `CLEAR`, `CHECKPOINT_REQUEST`,
   `SET_OBSERVE_PAGE_APIS`, `SET_SITE_OBSERVED`;
-- background messages: `STATE`, which carries the tab state, current settings and persistence status;
+- background messages: `STATE`, which carries the tab state, current settings, `settingsError`
+  (`null`, `apply`, `save`, or `load`) and persistence status;
   `CHECKPOINT_READY`, which carries the authoritative tab state at the marker;
 - content message: `FINGERPRINT`.
 
 Settings live in `chrome.storage.local` under `settings`: `observePageApis` and `excludedSites` (site
-keys). They are loaded and applied before any page of the session is instrumented. Switching them
-re-registers or unregisters the probe first and tells the panel afterwards, so the panel never claims a
-page is unwatched while the probe is still there. A signal that somehow still arrives from an excluded
+keys). They are loaded before startup registration is synchronized. Switching them
+updates or unregisters both page scripts first and tells the panel afterwards. This affects future
+document injection and signal acceptance; it does not undo modifications in already-loaded pages.
+Close and reopen affected tabs to discard the old instrumented documents. Site exclusions match
+each frame's own URL, so a third-party frame embedded on an excluded site can still be instrumented.
+Global API observation off prevents both MAIN-world and ISOLATED-world injection in every fresh
+frame while preserving network capture. The manifest contains no static content scripts. The panel explains both limits. A signal that somehow still arrives from an excluded
 site or while watching is off is refused. Network observation is unaffected: only page instrumentation
-is switched.
+is switched. A failed registration leaves the previous settings in force and reports an error to
+every panel. A failed settings write reports that the live choice was applied but not saved.
+Startup load or registration failures are also visible; a failed load does not overwrite the
+existing script registration with defaults. A successful settings retry clears the error.
+The exact passive-mode change and an anonymized manual result are recorded in
+[the compatibility note](COMPATIBILITY.md).
 
 State is mirrored to `chrome.storage.session` under `tab:<id>`. Background initialization
 rehydrates storage before queued browser events are applied. Writes are ordered per tab; a storage
@@ -251,10 +270,21 @@ from the pending set, so a coalesced update can never resurrect it. The cost of 
 100 ms of accumulation is lost if the worker is killed in between — the panel holds the last state
 delivered to it, which is behind by the same window, and the worker's own map dies with it.
 
+Each tab owns a private destination accumulator. It copies the destination table only on the first
+write after a snapshot is published, then replaces individual destination records within that draft.
+Delivery, binding, checkpoints, and `getState` all seal the draft before exposing it. Subsequent
+updates cannot mutate an earlier snapshot or an in-flight storage write. The standalone transition
+functions remain immutable. Grouped IP lists use one Set per group, finalized once after grouping.
+
 Diagnostics include an operation name, tab ID, and error message only. They do not include full
 URLs, page values, or copied data.
 
 ## Verification and delivery
+
+Release versions match across `manifest.json`, `package.json`, and the package-lock root.
+`CHANGELOG.md` contains a non-empty entry for that version, checked by static validation.
+The package job extracts that entry into a notes file and uploads it alongside the ZIP.
+The release job checks both SHA-256 digests and publishes that exact changelog text.
 
 - `npm test`: pure state, PSL/IP, controller, connection, view-model, and content-instrumentation
   tests.
@@ -294,7 +324,9 @@ A panel-local checkpoint requests a state snapshot from the background event que
 already processed when the marker is placed cannot arrive later as false new evidence. It snapshots
 each destination's request count and each known URL-port count.
 Subsequent rows include only new destinations and repeat requests, with per-port changes kept apart.
-The checkpoint is cleared when the tab or site session changes and when this tab is cleared. It is
+The checkpoint is cleared when the tab or site session changes and when this tab is cleared, using
+`recordGeneration` to invalidate every panel even if timestamps are equal. Stale checkpoints are
+also ignored by the view model. It is
 not persisted beyond the open panel.
 
 The panel periodically reads `storage.session.getBytesInUse(null)` and warns at 80% of the session

@@ -60,5 +60,7 @@
       forward(data);
     };
     probePort.start();
+    probePort.postMessage({ connected: true });
   }, false);
+  window.dispatchEvent(new Event('domainscan:relay-ready'));
 })();

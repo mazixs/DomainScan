@@ -1,5 +1,8 @@
 # DomainScan Reliable Tab State — Design
 
+Historical design from 2026-07-24. Current runtime behavior is documented in
+[ARCHITECTURE.md](../ARCHITECTURE.md), including later compatibility and performance changes.
+
 ## Goal
 
 Make DomainScan maintain correct, independent evidence for every browser tab, preserve evidence

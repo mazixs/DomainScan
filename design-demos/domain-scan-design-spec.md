@@ -51,7 +51,7 @@ The product should feel observant, credible, and independent. Avoid generic cybe
 
 ### Direction 1 — Evidence Ledger
 
-Time-anchor substitute for the unavailable Huashu style library: a strict Swiss editorial audit ledger. The panel reads vertically like a maintained evidence record. Use asymmetric typography, horizontal rules, row numbers or timestamps only when they carry meaning, and a restrained black/off-white/vermilion palette. Structure around a document header, a display-mode strip, and a continuous ruled list. Avoid containers around every section. Signature detail: the exact host list should feel like a printable audit record whose hierarchy survives without color.
+A strict Swiss editorial audit ledger. The panel reads vertically like a maintained evidence record. Use asymmetric typography, horizontal rules, row numbers or timestamps only when they carry meaning, and a restrained black/off-white/vermilion palette. Structure around a document header, a display-mode strip, and a continuous ruled list. Avoid containers around every section. Signature detail: the exact host list should feel like a printable audit record whose hierarchy survives without color.
 
 ### Direction 2 — Network Route Monitor
 
@@ -59,7 +59,7 @@ Reality-reference direction anchored in the causal clarity of network-monitoring
 
 ### Direction 3 — Privacy Receipt
 
-Unlimited-budget designer direction using Dieter Rams/Braun information-product principles: honest, understandable, unobtrusive, and thorough down to the last detail. The panel should start with a plain-language summary and progressively disclose exact evidence. It may resemble a well-typeset receipt or instrument readout, but not nostalgic skeuomorphism. Use a neutral paper/ink strategy with one purposeful signal color. Structure must differ from the other two: begin with a compact verdict-like sentence, divide destinations by understandable purpose, and keep raw hosts immediately visible rather than hidden behind a modal.
+An information-product direction based on Dieter Rams/Braun principles: honest, understandable, unobtrusive, and thorough down to the last detail. The panel should start with a plain-language summary and progressively disclose exact evidence. It may resemble a well-typeset receipt or instrument readout, but not nostalgic skeuomorphism. Use a neutral paper/ink strategy with one purposeful signal color. Structure must differ from the other two: begin with a compact verdict-like sentence, divide destinations by understandable purpose, and keep raw hosts immediately visible rather than hidden behind a modal.
 
 ## Form derivation
 

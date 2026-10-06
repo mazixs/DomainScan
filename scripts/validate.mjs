@@ -5,6 +5,7 @@
 
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
+import { releaseNotes } from './release-notes.mjs';
 
 const errors = [];
 const check = (cond, msg) => { if (!cond) errors.push(msg); };
@@ -34,6 +35,15 @@ if (existsSync('package.json')) {
   }
 }
 
+try {
+  const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+  check(lock.version === manifest.version && lock.packages?.['']?.version === manifest.version,
+    'package-lock.json root versions must match manifest version');
+  releaseNotes(readFileSync('CHANGELOG.md', 'utf8'), manifest.version);
+} catch (error) {
+  errors.push(`Release metadata is invalid: ${error.message}`);
+}
+
 // ---- referenced files exist ----
 const refs = [];
 if (manifest.background?.service_worker) refs.push(manifest.background.service_worker);
@@ -44,7 +54,8 @@ for (const p of Object.values(manifest.action?.default_icon ?? {})) refs.push(p)
 for (const r of refs) check(existsSync(r), `manifest references a missing file: ${r}`);
 
 // The MAIN-world probe is registered at runtime, so the manifest cannot vouch for it.
-const dynamicScripts = ['src/content/fingerprint-probe.js'];
+check(!manifest.content_scripts?.length, 'page scripts must be dynamic so API observation off injects no scripts');
+const dynamicScripts = ['src/content/fingerprint-relay.js', 'src/content/fingerprint-probe.js'];
 for (const f of dynamicScripts) {
   check(existsSync(f), `dynamically registered script is missing: ${f}`);
 }

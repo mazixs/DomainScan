@@ -30,7 +30,12 @@ export const FALLBACK_EN = {
   watchApisStart: 'Watch browser API use',
   watchSiteStop: 'Stop watching on this site',
   watchSiteStart: 'Watch on this site',
+  settingsError_apply: 'Could not apply observation settings. Try changing them again.',
+  settingsError_save: 'Observation settings were applied but not saved. Change them again to save your choice.',
+  settingsError_load: 'Could not load observation settings. Check and save your choice again.',
   apiWatchOff: 'Browser API use is not being watched.',
+  apiWatchReload: 'Close and reopen this tab to remove earlier page API changes. Network addresses are still recorded.',
+  apiWatchSiteHelp: 'This site is excluded. Embedded pages from other sites may still be observed. If the problem continues, stop watching browser API use entirely and reopen the tab.',
   viaServiceWorker: 'via service worker',
   viaServiceWorkerHint: "Requested by the site's service worker, which every tab of this site shares — not by this page.",
 

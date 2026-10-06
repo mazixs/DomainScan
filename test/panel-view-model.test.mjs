@@ -304,3 +304,23 @@ test('a row exposes every category the destination was seen as', () => {
     ['image', 'document']
   );
 });
+
+test('grouped IPs preserve first-seen order and deduplicate across many exact hosts', () => {
+  const state = { destinations: {} };
+  const addresses = [];
+  for (let index = 0; index < 1000; index += 1) {
+    const value = `h${index}.example.test`;
+    const ip = `2001:db8::${(index + 1).toString(16)}`;
+    addresses.push(ip);
+    state.destinations[`host|${value}`] = {
+      id: `host|${value}`, kind: 'host', value, party: 'first', firstSeen: index,
+      requestTypes: ['fetch'], ips: { '203.0.113.10': { value: '203.0.113.10' }, [ip]: { value: ip } }
+    };
+  }
+  const rows = buildDestinationRows(state, { mode: 'registrable' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].grouped, 1000);
+  assert.equal(rows[0].members.length, 1000);
+  assert.deepEqual(rows[0].ips, ['203.0.113.10', ...addresses]);
+  assert.equal('ipSet' in rows[0], false);
+});

@@ -38,6 +38,7 @@ const ui = {
   visibleLimit: PAGE_SIZE,
   storageUsedBytes: null,
   storageWriteFailed: false,
+  settingsError: null,
   lastStorageCheck: 0,
   showPorts: readPortPreference(),
   selected: Object.create(null), // rowKey -> display value
@@ -88,6 +89,8 @@ const el = {
   checkpointStatus: document.getElementById('checkpoint-status'),
   storageNote: document.getElementById('storage-note'),
   storageMessage: document.getElementById('storage-message'),
+  settingsError: document.getElementById('settings-error'),
+  apiWatchHelp: document.getElementById('api-watch-help'),
   exportRecord: document.getElementById('export-record'),
   storageClear: document.getElementById('storage-clear'),
   list: document.getElementById('list'),
@@ -285,6 +288,12 @@ function renderHeader() {
   el.togglePause.disabled = disconnected;
   el.clearBtn.disabled = disconnected;
   renderWatchMenu(disconnected);
+  el.settingsError.hidden = !ui.settingsError;
+  el.settingsError.textContent = ui.settingsError ? t('settingsError_' + ui.settingsError) : '';
+  const apisOff = !settings.observePageApis || settings.excludedSites.includes(state?.siteKey);
+  el.apiWatchHelp.hidden = !apisOff || ['apply', 'load'].includes(ui.settingsError);
+  el.apiWatchHelp.textContent = apisOff
+    ? t(settings.observePageApis ? 'apiWatchSiteHelp' : 'apiWatchReload') : '';
 
   el.siteHost.textContent = (state && state.pageHost) || '';
 
@@ -334,7 +343,7 @@ function renderFingerprint() {
   const siteKey = state && state.siteKey;
   const watching = settings.observePageApis && !settings.excludedSites.includes(siteKey);
 
-  if (!watching && summary.observed.length === 0) {
+  if (!watching && summary.observed.length === 0 && !['apply', 'load'].includes(ui.settingsError)) {
     el.fpNote.hidden = false;
     el.fpTitle.textContent = t('apiWatchOff');
     el.fpTag.hidden = true;
@@ -1077,9 +1086,10 @@ function wireEvents() {
 function connectLive() {
   connection = createPanelConnection({
     chromeApi: chrome,
-    onState(nextState, nextSettings, storageWriteFailed) {
+    onState(nextState, nextSettings, storageWriteFailed, settingsError) {
       if (!state || state.tabId !== nextState.tabId || state.siteKey !== nextState.siteKey ||
-          state.siteStartedAt !== nextState.siteStartedAt) {
+          state.siteStartedAt !== nextState.siteStartedAt ||
+          state.recordGeneration !== nextState.recordGeneration) {
         ui.selected = Object.create(null);
         ui.checkpoint = null;
         ui.checkpointPending = false;
@@ -1087,6 +1097,7 @@ function connectLive() {
       }
       state = nextState;
       ui.storageWriteFailed = storageWriteFailed;
+      ui.settingsError = ['apply', 'save', 'load'].includes(settingsError) ? settingsError : null;
       if (nextSettings) {
         settings = {
           observePageApis: nextSettings.observePageApis !== false,
@@ -1100,7 +1111,8 @@ function connectLive() {
       ui.checkpointPending = false;
       if (!state || !checkpointState || state.tabId !== checkpointState.tabId ||
           state.siteKey !== checkpointState.siteKey ||
-          state.siteStartedAt !== checkpointState.siteStartedAt) {
+          state.siteStartedAt !== checkpointState.siteStartedAt ||
+          state.recordGeneration !== checkpointState.recordGeneration) {
         renderCheckpoint();
         return;
       }

@@ -33,7 +33,12 @@
   "watchApisStart": { "message": "Watch browser API use" },
   "watchSiteStop": { "message": "Stop watching on this site" },
   "watchSiteStart": { "message": "Watch on this site" },
+  "settingsError_apply": { "message": "Could not apply observation settings. Try changing them again." },
+  "settingsError_save": { "message": "Observation settings were applied but not saved. Change them again to save your choice." },
+  "settingsError_load": { "message": "Could not load observation settings. Check and save your choice again." },
   "apiWatchOff": { "message": "Browser API use is not being watched." },
+  "apiWatchReload": { "message": "Close and reopen this tab to remove earlier page API changes. Network addresses are still recorded." },
+  "apiWatchSiteHelp": { "message": "This site is excluded. Embedded pages from other sites may still be observed. If the problem continues, stop watching browser API use entirely and reopen the tab." },
 
   "showingDestinations": {
     "message": "Showing $count$ destinations",

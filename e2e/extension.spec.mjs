@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const extensionPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const extensionPath = process.env.DOMAINSCAN_EXTENSION_PATH
+  ? path.resolve(process.env.DOMAINSCAN_EXTENSION_PATH)
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 let server;
 let port;
@@ -54,6 +56,11 @@ test.beforeAll(async () => {
     if (request.url === '/asset') {
       response.setHeader('Content-Type', 'text/plain');
       response.end('asset');
+      return;
+    }
+    if (request.url === '/embedded-page') {
+      response.setHeader('Content-Type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html><title>embedded</title><iframe src="${url('frame.vendor.test', '/minimal')}"></iframe>`);
       return;
     }
 
@@ -293,7 +300,7 @@ test('rejects a page-forged signal and replacement channel', async () => {
   await expect(panel.locator('#signal-list > li')).toHaveCount(0);
 });
 
-test('keeps page instrumentation invisible to native-source and stack checks', async () => {
+test('preserves same-realm native-source checks and tested error stacks', async () => {
   const page = await context.newPage();
   await page.goto(url('cloak.alpha.test'));
 
@@ -472,7 +479,7 @@ test('watching page API use can be switched off and back on', async () => {
 
   await panel.locator('#settings-btn').click();
   await panel.locator('#toggle-apis').click();
-  // The panel states the change only once the probe is really gone.
+  // Registration is disabled for fresh documents; the loaded page must be reopened.
   await expect(panel.locator('#fp-note')).toBeVisible();
   await panel.close();
 
@@ -658,4 +665,188 @@ test('long histories page the visible rows without losing captured destinations'
   await expect(panel.locator('#show-more')).toBeHidden();
   await page.close();
   await panel.close();
+});
+
+test('clearing a record resets the marker in every open panel for that tab', async () => {
+  const page = await context.newPage();
+  await page.goto(url('clear.alpha.test'));
+  const first = await openPanelFor(page);
+  const second = await openPanelFor(page);
+  await expect(second.locator('#list')).toContainText('cdn.alpha.test');
+  await second.locator('#checkpoint-btn').click();
+  await expect(second.locator('#checkpoint-status')).not.toHaveText('');
+  await first.locator('#settings-btn').click();
+  await first.locator('#clear-btn').click();
+  await expect(second.locator('#checkpoint-status')).toHaveText('');
+  await page.evaluate((asset) => fetch(asset), url('cdn.alpha.test', '/asset'));
+  await expect(second.locator('#list')).toContainText('cdn.alpha.test');
+  await Promise.all([first.close(), second.close(), page.close()]);
+});
+
+test('failed observation settings remain visible and can be retried without clipping the menu', async () => {
+  const page = await context.newPage();
+  await page.goto(url('settings.alpha.test'));
+  const panel = await openPanelFor(page);
+  await expect(panel.locator('#site-host')).toHaveText('settings.alpha.test');
+  const worker = await extensionWorker();
+  await worker.evaluate(() => {
+    globalThis.__testUnregister = chrome.scripting.unregisterContentScripts;
+    chrome.scripting.unregisterContentScripts = async () => { throw new Error('test registration failure'); };
+  });
+  try {
+    await panel.locator('#settings-btn').click();
+    await panel.locator('#toggle-apis').click();
+    await expect(panel.locator('#settings-error')).toHaveText(await panel.evaluate(() => chrome.i18n.getMessage('settingsError_apply')));
+    await panel.locator('#settings-btn').click();
+    await expect(panel.locator('#toggle-apis')).toHaveText(await panel.evaluate(() => chrome.i18n.getMessage('watchApisStop')));
+    for (const width of [360, 420, 520]) {
+      await panel.setViewportSize({ width, height: 760 });
+      const bounds = await panel.locator('#settings-menu').boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(760);
+      expect(await panel.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    }
+    await panel.screenshot({ path: 'output/playwright/settings-error.png' });
+  } finally {
+    await worker.evaluate(() => {
+      chrome.scripting.unregisterContentScripts = globalThis.__testUnregister;
+      delete globalThis.__testUnregister;
+    });
+  }
+  await panel.locator('#toggle-apis').click();
+  await expect(panel.locator('#settings-error')).toBeHidden();
+  await panel.locator('#settings-btn').click();
+  await expect(panel.locator('#toggle-apis')).toHaveText(await panel.evaluate(() => chrome.i18n.getMessage('watchApisStart')));
+  await panel.locator('#toggle-apis').click();
+  await expect(panel.locator('#settings-error')).toBeHidden();
+  await Promise.all([panel.close(), page.close()]);
+});
+
+test('an unsaved observation choice is distinguished from an unapplied one', async () => {
+  const page = await context.newPage();
+  await page.goto(url('unsaved.alpha.test'));
+  const panel = await openPanelFor(page);
+  await expect(panel.locator('#site-host')).toHaveText('unsaved.alpha.test');
+  const worker = await extensionWorker();
+  await worker.evaluate(() => {
+    globalThis.__testLocalSet = chrome.storage.local.set;
+    chrome.storage.local.set = async () => { throw new Error('test storage failure'); };
+  });
+  try {
+    await panel.locator('#settings-btn').click();
+    await panel.locator('#toggle-apis').click();
+    await expect(panel.locator('#settings-error')).toHaveText(await panel.evaluate(() => chrome.i18n.getMessage('settingsError_save')));
+    await panel.locator('#settings-btn').click();
+    await expect(panel.locator('#toggle-apis')).toHaveText(await panel.evaluate(() => chrome.i18n.getMessage('watchApisStart')));
+  } finally {
+    await worker.evaluate(() => {
+      chrome.storage.local.set = globalThis.__testLocalSet;
+      delete globalThis.__testLocalSet;
+    });
+  }
+  await panel.locator('#toggle-apis').click();
+  await expect(panel.locator('#settings-error')).toBeHidden();
+  await Promise.all([panel.close(), page.close()]);
+});
+
+test('page API observation has cross-realm side effects while global off keeps fresh pages untouched', async () => {
+  const page = await context.newPage();
+  await page.goto(url('compat.alpha.test'));
+  const report = await page.evaluate(() => {
+    const frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    const nativeSource = frame.contentWindow.Function.prototype.toString;
+    try {
+      const before = {
+        localCheckSeesNative: Function.prototype.toString.call(Date.prototype.getTimezoneOffset).includes('[native code]'),
+        cleanRealmSeesNative: nativeSource.call(Date.prototype.getTimezoneOffset).includes('[native code]')
+      };
+      new Date().getTimezoneOffset();
+      return {
+        ...before,
+        dateRestoredAfterRead: nativeSource.call(Date.prototype.getTimezoneOffset).includes('[native code]'),
+        toStringRemainsChanged: !nativeSource.call(Function.prototype.toString).includes('[native code]')
+      };
+    } finally {
+      frame.remove();
+    }
+  });
+  console.log('Observation compatibility:', JSON.stringify(report));
+  expect(report).toEqual({
+    localCheckSeesNative: true, cleanRealmSeesNative: false,
+    dateRestoredAfterRead: true, toStringRemainsChanged: true
+  });
+  const panel = await openPanelFor(page);
+  await expect(panel.locator('#site-host')).toHaveText('compat.alpha.test');
+  await panel.locator('#settings-btn').click();
+  await panel.locator('#toggle-apis').click();
+  await expect.poll(() => extensionWorker().then((worker) => worker.evaluate(async () =>
+    (await chrome.scripting.getRegisteredContentScripts()).length
+  ))).toBe(0);
+  await expect(panel.locator('#api-watch-help')).toHaveText(await panel.evaluate(() => chrome.i18n.getMessage('apiWatchReload')));
+  expect(await page.evaluate(() => {
+    const frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    const changed = !frame.contentWindow.Function.prototype.toString.call(Function.prototype.toString).includes('[native code]');
+    frame.remove();
+    return changed;
+  })).toBe(true);
+  expect(await (await extensionWorker()).evaluate(() => chrome.runtime.getManifest().content_scripts || [])).toEqual([]);
+  const fresh = await context.newPage();
+  const cdp = await context.newCDPSession(fresh);
+  const executionContexts = [];
+  cdp.on('Runtime.executionContextCreated', ({ context: executionContext }) => executionContexts.push(executionContext));
+  await cdp.send('Runtime.enable');
+  await fresh.goto(url('compat-fresh.alpha.test'));
+  expect(await fresh.evaluate(() => {
+    const frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    const source = frame.contentWindow.Function.prototype.toString;
+    const native = [Function.prototype.toString, Date.prototype.getTimezoneOffset, CanvasRenderingContext2D.prototype.getImageData]
+      .every((fn) => source.call(fn).includes('[native code]'));
+    frame.remove();
+    return native;
+  })).toBe(true);
+  expect(executionContexts.filter((entry) => entry.origin === `chrome-extension://${extensionId}` || entry.name.includes(extensionId))).toEqual([]);
+  await cdp.detach();
+  const freshPanel = await openPanelFor(fresh);
+  await expect(freshPanel.locator('#list')).toContainText('cdn.alpha.test');
+  await freshPanel.locator('#settings-btn').click();
+  await freshPanel.locator('#toggle-apis').click();
+  await expect.poll(() => extensionWorker().then((worker) => worker.evaluate(async () =>
+    (await chrome.scripting.getRegisteredContentScripts()).length
+  ))).toBe(2);
+  await Promise.all([panel.close(), page.close(), fresh.close(), freshPanel.close()]);
+});
+
+test('site exclusions leave third-party frames observed and explain the global off option', async () => {
+  const page = await context.newPage();
+  await page.goto(url('excluded.compat.test'));
+  const panel = await openPanelFor(page);
+  await expect(panel.locator('#site-host')).toHaveText('excluded.compat.test');
+  await panel.locator('#settings-btn').click();
+  await panel.locator('#toggle-site').click();
+  await expect(panel.locator('#api-watch-help')).toHaveText(await panel.evaluate(() => chrome.i18n.getMessage('apiWatchSiteHelp')));
+  const fresh = await context.newPage();
+  await fresh.goto(url('excluded.compat.test', '/embedded-page'));
+  const inspectedFrame = (frame) => frame.evaluate(() => {
+    const reference = document.createElement('iframe');
+    document.body.appendChild(reference);
+    const source = reference.contentWindow.Function.prototype.toString;
+    const native = [Function.prototype.toString, Date.prototype.getTimezoneOffset].every((fn) => source.call(fn).includes('[native code]'));
+    reference.remove();
+    return native;
+  });
+  expect(await inspectedFrame(fresh.mainFrame())).toBe(true);
+  const embedded = fresh.frames().find((frame) => frame.url().includes('frame.vendor.test'));
+  expect(embedded).toBeTruthy();
+  expect(await inspectedFrame(embedded)).toBe(false);
+  const freshPanel = await openPanelFor(fresh);
+  await expect(freshPanel.locator('#site-host')).toHaveText('excluded.compat.test');
+  await expect(freshPanel.locator('#list')).toContainText('frame.vendor.test');
+  await freshPanel.locator('#settings-btn').click();
+  await freshPanel.locator('#toggle-site').click();
+  await expect(freshPanel.locator('#api-watch-help')).toBeHidden();
+  await Promise.all([page.close(), panel.close(), fresh.close(), freshPanel.close()]);
 });

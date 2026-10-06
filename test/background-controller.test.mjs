@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { MSG, PORT_NAME } from '../src/common/messages.js';
 import { createBackgroundController } from '../src/background/controller.js';
+import { buildDestinationRows, captureCheckpoint } from '../src/sidepanel/view-model.js';
 
 function fakeEvent() {
   const listeners = [];
@@ -34,20 +35,20 @@ function fakePort(name = PORT_NAME) {
   };
 }
 
-function fakeChrome(initialStorage = {}, initialLocal = {}) {
+function fakeChrome(initialStorage = {}, initialLocal = {}, initialScripts = []) {
   const storage = structuredClone(initialStorage);
   const local = structuredClone(initialLocal);
   const counters = { writes: 0 };
   const scriptingCalls = [];
-  let registeredScripts = [];
+  let registeredScripts = structuredClone(initialScripts);
   return {
     storageData: storage,
     localData: local,
     counters,
     scriptingCalls,
     scripting: {
-      async getRegisteredContentScripts() {
-        return structuredClone(registeredScripts);
+      async getRegisteredContentScripts({ ids } = {}) {
+        return structuredClone(registeredScripts.filter((script) => !ids || ids.includes(script.id)));
       },
       async registerContentScripts(scripts) {
         scriptingCalls.push({ call: 'register', scripts: structuredClone(scripts) });
@@ -55,7 +56,7 @@ function fakeChrome(initialStorage = {}, initialLocal = {}) {
       },
       async updateContentScripts(scripts) {
         scriptingCalls.push({ call: 'update', scripts: structuredClone(scripts) });
-        registeredScripts = structuredClone(scripts);
+        registeredScripts = registeredScripts.map((script) => ({ ...script, ...structuredClone(scripts.find((update) => update.id === script.id) || {}) }));
       },
       async unregisterContentScripts({ ids }) {
         scriptingCalls.push({ call: 'unregister', ids: structuredClone(ids) });
@@ -975,8 +976,11 @@ test('page instrumentation is registered on start and reported to the panel', as
 
   const registered = chrome.scriptingCalls.filter((entry) => entry.call === 'register');
   assert.equal(registered.length, 1);
-  assert.deepEqual(registered[0].scripts[0].js, ['src/content/fingerprint-probe.js']);
-  assert.equal(registered[0].scripts[0].world, 'MAIN');
+  assert.equal(registered[0].scripts.length, 2);
+  assert.deepEqual(registered[0].scripts[0].js, ['src/content/fingerprint-relay.js']);
+  assert.equal(registered[0].scripts[0].world, 'ISOLATED');
+  assert.deepEqual(registered[0].scripts[1].js, ['src/content/fingerprint-probe.js']);
+  assert.equal(registered[0].scripts[1].world, 'MAIN');
   assert.equal(registered[0].scripts[0].runAt, 'document_start');
   assert.deepEqual(registered[0].scripts[0].excludeMatches, []);
   assert.deepEqual(lastMessage(port, MSG.STATE).settings, {
@@ -999,7 +1003,7 @@ test('turning page instrumentation off unregisters it and remembers the choice',
 
   assert.deepEqual(
     chrome.scriptingCalls.filter((entry) => entry.call === 'unregister').at(-1).ids,
-    ['domainscan-page-probe']
+    ['domainscan-signal-relay', 'domainscan-page-probe']
   );
   assert.equal(lastMessage(port, MSG.STATE).settings.observePageApis, false);
   assert.equal(chrome.localData.settings.observePageApis, false);
@@ -1227,4 +1231,263 @@ test('captures URL ports for committed navigation, page and worker requests with
   assert.deepEqual(destinations['host|socket.example'].ports, [9443, 443]);
   assert.deepEqual(destinations['host|worker.example'].ports, [8080]);
   assert.deepEqual(destinations['host|worker.example'].ips['2001:db8::1'].ports, [8080]);
+});
+
+test('late responses cannot cross a return to the same site, a clear, or a browser page', async () => {
+  for (const transition of ['return', 'clear', 'browser']) {
+    const chrome = fakeChrome();
+    const controller = createBackgroundController(chrome, { now: () => 500 });
+    await controller.ready;
+    const port = fakePort();
+    chrome.runtime.onConnect.emit(port);
+    port.receive({ type: MSG.HELLO, tabId: 90 });
+    navigate(chrome, 90, 'https://alpha.test/');
+    const old = request(chrome, 90, 'https://cdn.vendor.test/old');
+    if (transition === 'clear') port.receive({ type: MSG.CLEAR });
+    else {
+      chrome.tabs.onUpdated.emit(90, { url: transition === 'browser' ? 'chrome://settings/' : 'https://beta.test/' });
+      navigate(chrome, 90, 'https://alpha.test/');
+    }
+    const fresh = request(chrome, 90, 'https://cdn.vendor.test/new');
+    for (const [requestId, suffix, ip] of [[old, 'old', '203.0.113.10'], [fresh, 'new', '203.0.113.11']]) {
+      chrome.webRequest.onResponseStarted.emit({ tabId: 90, url: `https://cdn.vendor.test/${suffix}`, requestId, ip });
+    }
+    await controller.flush();
+    assert.deepEqual(Object.keys(controller.getState(90).destinations['host|cdn.vendor.test'].ips), ['203.0.113.11'], transition);
+  }
+});
+
+test('worker responses respect each target tab record generation', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome, { now: () => 500 });
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 91 });
+  navigate(chrome, 91, 'https://app.alpha.test/');
+  navigate(chrome, 92, 'https://app.alpha.test/');
+  chrome.webRequest.onBeforeRequest.emit({ tabId: -1, initiator: 'https://app.alpha.test', url: 'https://cdn.vendor.test/old', requestId: 'shared-old', type: 'script' });
+  port.receive({ type: MSG.CLEAR });
+  request(chrome, 91, 'https://cdn.vendor.test/new');
+  chrome.webRequest.onResponseStarted.emit({ tabId: -1, url: 'https://cdn.vendor.test/old', requestId: 'shared-old', ip: '203.0.113.10' });
+  await controller.flush();
+  assert.deepEqual(controller.getState(91).destinations['host|cdn.vendor.test'].ips, {});
+  assert.ok(controller.getState(92).destinations['host|cdn.vendor.test'].ips['203.0.113.10']);
+});
+
+test('clear invalidates a checkpoint in every subscriber even when the clock does not move', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome, { now: () => 500 });
+  await controller.ready;
+  const first = fakePort();
+  const second = fakePort();
+  for (const port of [first, second]) {
+    chrome.runtime.onConnect.emit(port);
+    port.receive({ type: MSG.HELLO, tabId: 93 });
+  }
+  navigate(chrome, 93, 'https://alpha.test/');
+  request(chrome, 93, 'https://cdn.vendor.test/old');
+  await controller.flush();
+  const checkpoint = captureCheckpoint(lastState(second));
+  first.receive({ type: MSG.CLEAR });
+  request(chrome, 93, 'https://cdn.vendor.test/new');
+  await controller.flush();
+  const next = lastState(second);
+  assert.equal(next.recordGeneration, checkpoint.recordGeneration + 1);
+  assert.equal(buildDestinationRows(next, { checkpoint }).length, 1);
+});
+
+test('registration failure keeps the previous settings and reports an error to all panels', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome, { logger: { warn() {} } });
+  await controller.ready;
+  const ports = [fakePort(), fakePort()];
+  for (const port of ports) {
+    chrome.runtime.onConnect.emit(port);
+    port.receive({ type: MSG.HELLO, tabId: 94 });
+  }
+  await controller.flush();
+  const unregister = chrome.scripting.unregisterContentScripts;
+  chrome.scripting.unregisterContentScripts = async () => { throw new Error('registration failure'); };
+  ports[0].receive({ type: MSG.SET_OBSERVE_PAGE_APIS, enabled: false });
+  await controller.flush();
+  for (const port of ports) {
+    assert.equal(port.sent.at(-1).settings.observePageApis, true);
+    assert.equal(port.sent.at(-1).settingsError, 'apply');
+  }
+  assert.equal(chrome.localData.settings, undefined);
+  chrome.scripting.unregisterContentScripts = unregister;
+  ports[0].receive({ type: MSG.SET_OBSERVE_PAGE_APIS, enabled: false });
+  await controller.flush();
+  assert.equal(ports[1].sent.at(-1).settings.observePageApis, false);
+  assert.equal(ports[1].sent.at(-1).settingsError, null);
+  assert.equal(chrome.localData.settings.observePageApis, false);
+});
+
+test('settings storage failure reports applied but unsaved settings and recovers on retry', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome, { logger: { warn() {} } });
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 95 });
+  await controller.flush();
+  const save = chrome.storage.local.set;
+  chrome.storage.local.set = async () => { throw new Error('storage failure'); };
+  port.receive({ type: MSG.SET_OBSERVE_PAGE_APIS, enabled: false });
+  await controller.flush();
+  assert.equal(port.sent.at(-1).settings.observePageApis, false);
+  assert.equal(port.sent.at(-1).settingsError, 'save');
+  assert.equal(chrome.localData.settings, undefined);
+  chrome.storage.local.set = save;
+  port.receive({ type: MSG.SET_OBSERVE_PAGE_APIS, enabled: false });
+  await controller.flush();
+  assert.equal(port.sent.at(-1).settingsError, null);
+  assert.equal(chrome.localData.settings.observePageApis, false);
+});
+
+test('startup registration failure is visible instead of silently claiming saved settings are active', async () => {
+  const chrome = fakeChrome();
+  chrome.scripting.registerContentScripts = async () => { throw new Error('registration failure'); };
+  const controller = createBackgroundController(chrome, { logger: { warn() {} } });
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 96 });
+  await controller.flush();
+  assert.equal(port.sent.at(-1).settingsError, 'apply');
+});
+
+test('delayed storage writes and checkpoints keep the exact snapshot they were given', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  navigate(chrome, 97, 'https://alpha.test/');
+  request(chrome, 97, 'https://cdn.vendor.test/first');
+  await controller.flush();
+  const captured = controller.getState(97);
+  const before = structuredClone(captured);
+  const pending = [];
+  chrome.storage.session.set = (values) => new Promise((resolve) => { pending.push({ values, resolve }); });
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 97 });
+  request(chrome, 97, 'https://cdn.vendor.test/second');
+  port.receive({ type: MSG.CHECKPOINT_REQUEST });
+  request(chrome, 97, 'https://cdn.vendor.test/third');
+  port.receive({ type: MSG.SET_PAUSED, paused: true });
+  await waitFor(() => pending.length === 1, 'delayed persistence');
+  const writeCount = pending[0].values['tab:97'].destinations['host|cdn.vendor.test'].count;
+  port.receive({ type: MSG.SET_PAUSED, paused: false });
+  request(chrome, 97, 'https://cdn.vendor.test/fourth');
+  port.receive({ type: MSG.CHECKPOINT_REQUEST });
+  await waitFor(() => lastMessage(port, MSG.CHECKPOINT_READY)?.state.destinations['host|cdn.vendor.test'].count === 4, 'fresh marker');
+  assert.equal(pending[0].values['tab:97'].destinations['host|cdn.vendor.test'].count, writeCount);
+  assert.deepEqual(captured, before);
+  assert.equal(port.sent.find((message) => message.type === MSG.CHECKPOINT_READY).state.destinations['host|cdn.vendor.test'].count, 2);
+  chrome.storage.session.set = async () => {};
+  pending[0].resolve();
+  await controller.flush();
+});
+
+test('a failed settings load leaves existing script registration untouched and reports the problem', async () => {
+  const chrome = fakeChrome();
+  chrome.storage.local.get = async () => { throw new Error('storage failure'); };
+  const controller = createBackgroundController(chrome, { logger: { warn() {} } });
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 98 });
+  await controller.flush();
+  assert.deepEqual(chrome.scriptingCalls, []);
+  assert.equal(port.sent.at(-1).settingsError, 'load');
+  port.receive({ type: MSG.SET_OBSERVE_PAGE_APIS, enabled: false });
+  await controller.flush();
+  assert.equal(port.sent.at(-1).settingsError, null);
+  assert.equal(chrome.localData.settings.observePageApis, false);
+});
+
+test('clearing while a document loads discards its buffered pre-clear IP', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 99 });
+  navigate(chrome, 99, 'https://alpha.test/');
+  chrome.webRequest.onBeforeRequest.emit({ tabId: 99, url: 'https://beta.test/', type: 'main_frame', requestId: 'pending-document' });
+  chrome.webRequest.onResponseStarted.emit({ tabId: 99, url: 'https://beta.test/', ip: '203.0.113.10', requestId: 'pending-document' });
+  port.receive({ type: MSG.CLEAR });
+  chrome.tabs.onUpdated.emit(99, { url: 'https://beta.test/' });
+  await controller.flush();
+  assert.equal(controller.getState(99).siteKey, 'beta.test');
+  assert.deepEqual(controller.getState(99).destinations, {});
+});
+
+test('requests started while paused cannot attach an IP after capture resumes', async () => {
+  for (const worker of [false, true]) {
+    const chrome = fakeChrome();
+    const controller = createBackgroundController(chrome);
+    await controller.ready;
+    const port = fakePort();
+    chrome.runtime.onConnect.emit(port);
+    port.receive({ type: MSG.HELLO, tabId: 100 });
+    navigate(chrome, 100, 'https://app.alpha.test/');
+    request(chrome, 100, 'https://cdn.vendor.test/known');
+    port.receive({ type: MSG.SET_PAUSED, paused: true });
+    chrome.webRequest.onBeforeRequest.emit({
+      tabId: worker ? -1 : 100, initiator: 'https://app.alpha.test',
+      url: 'https://cdn.vendor.test/paused', type: 'script', requestId: 'paused-response'
+    });
+    port.receive({ type: MSG.SET_PAUSED, paused: false });
+    chrome.webRequest.onResponseStarted.emit({
+      tabId: worker ? -1 : 100, url: 'https://cdn.vendor.test/paused', requestId: 'paused-response', ip: '203.0.113.10'
+    });
+    await controller.flush();
+    const destination = controller.getState(100).destinations['host|cdn.vendor.test'];
+    assert.equal(destination.count, 1);
+    assert.deepEqual(destination.ips, {});
+  }
+});
+
+test('a document requested while paused follows navigation without retroactive capture on resume', async () => {
+  const chrome = fakeChrome();
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  const port = fakePort();
+  chrome.runtime.onConnect.emit(port);
+  port.receive({ type: MSG.HELLO, tabId: 101 });
+  navigate(chrome, 101, 'https://alpha.test/');
+  port.receive({ type: MSG.SET_PAUSED, paused: true });
+  chrome.webRequest.onBeforeRequest.emit({ tabId: 101, url: 'https://beta.test/', type: 'main_frame', requestId: 'paused-document' });
+  chrome.webRequest.onResponseStarted.emit({ tabId: 101, url: 'https://beta.test/', requestId: 'paused-document', ip: '203.0.113.10' });
+  port.receive({ type: MSG.SET_PAUSED, paused: false });
+  chrome.tabs.onUpdated.emit(101, { url: 'https://beta.test/' });
+  await controller.flush();
+  assert.equal(controller.getState(101).siteKey, 'beta.test');
+  assert.deepEqual(controller.getState(101).destinations, {});
+});
+
+
+test('disabled observation removes both persisted page scripts on startup and keeps network capture', async () => {
+  const chrome = fakeChrome({}, { settings: { observePageApis: false } }, [
+    { id: 'domainscan-page-probe' }, { id: 'domainscan-signal-relay' }
+  ]);
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  assert.deepEqual(await chrome.scripting.getRegisteredContentScripts(), []);
+  assert.equal(chrome.scriptingCalls.some((entry) => entry.call === 'register'), false);
+  navigate(chrome, 95, 'https://passive.example.com/');
+  await controller.flush();
+  assert.ok(Object.keys(controller.getState(95).destinations).length > 0);
+});
+
+test('startup upgrades a probe-only registration to a relay-first pair without removing other scripts', async () => {
+  const chrome = fakeChrome({}, {}, [{ id: 'domainscan-page-probe' }, { id: 'unrelated' }]);
+  const controller = createBackgroundController(chrome);
+  await controller.ready;
+  const calls = chrome.scriptingCalls;
+  assert.deepEqual(calls[0].ids, ['domainscan-page-probe']);
+  assert.deepEqual(calls[1].scripts.map((script) => script.id), ['domainscan-signal-relay', 'domainscan-page-probe']);
+  assert.equal((await chrome.scripting.getRegisteredContentScripts()).length, 3);
 });

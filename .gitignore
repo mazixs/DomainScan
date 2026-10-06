@@ -19,6 +19,7 @@ ehthumbs.db
 *.orig
 
 # Local agent and browser-session artifacts
+.impeccable/
 .codex/
 .claude/settings.local.json
 .playwright-mcp/

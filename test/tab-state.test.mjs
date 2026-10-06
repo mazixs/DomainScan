@@ -3,12 +3,54 @@ import assert from 'node:assert/strict';
 
 import {
   makeTabState,
+  createTabStateAccumulator,
   applyTopLevelNavigation,
   recordDestination,
   recordResolvedIp,
   recordFingerprintSignal,
   normalizeTabState
 } from '../src/lib/tab-state.js';
+
+test('draft accumulation preserves published states including IP and port details', () => {
+  const draft = createTabStateAccumulator();
+  const initial = makeTabState(1, 100);
+  let state = draft.recordDestination(initial, { ...hostObservation('cdn.example.test'), port: 443 }, 101);
+  state = draft.recordResolvedIp(state, 'cdn.example.test', '203.0.113.10', 102, 443);
+  const published = draft.snapshot(state);
+  const before = structuredClone(published);
+  state = draft.recordDestination(state, { ...hostObservation('cdn.example.test'), port: 8443 }, 103);
+  const table = state.destinations;
+  state = draft.recordResolvedIp(state, 'cdn.example.test', '203.0.113.11', 104, 8443);
+  state = draft.recordDestination(state, hostObservation('other.example.test'), 105);
+
+  assert.equal(state.destinations, table);
+  assert.notEqual(state.destinations, published.destinations);
+  assert.deepEqual(published, before);
+  assert.deepEqual(initial.destinations, {});
+  assert.equal(state.destinations['host|cdn.example.test'].count, 2);
+  assert.equal(state.destinations['host|cdn.example.test'].portDetails[8443].count, 1);
+  assert.equal(Object.keys(state.destinations['host|cdn.example.test'].ips).length, 2);
+});
+
+test('pure transitions retain immutable destination tables', () => {
+  const initial = makeTabState(1, 100);
+  const first = recordDestination(initial, hostObservation('cdn.example.test'), 101);
+  const next = recordDestination(first, hostObservation('cdn.example.test'), 102);
+  assert.notEqual(first.destinations, next.destinations);
+  assert.equal(first.destinations['host|cdn.example.test'].count, 1);
+  assert.equal(next.destinations['host|cdn.example.test'].count, 2);
+});
+
+test('record generations survive storage and change independently of timestamps', () => {
+  const first = applyTopLevelNavigation(makeTabState(1, 100), 'https://alpha.test', 100);
+  const same = applyTopLevelNavigation(first, 'https://sub.alpha.test', 100);
+  const second = applyTopLevelNavigation(same, 'https://beta.test', 100);
+  const returned = applyTopLevelNavigation(second, 'https://alpha.test', 100);
+  assert.equal(first.recordGeneration, same.recordGeneration);
+  assert.equal(returned.recordGeneration, first.recordGeneration + 2);
+  assert.equal(normalizeTabState(returned).recordGeneration, returned.recordGeneration);
+  assert.equal(normalizeTabState({ tabId: 1 }).recordGeneration, 0);
+});
 
 function hostObservation(value, requestType = 'script') {
   return {

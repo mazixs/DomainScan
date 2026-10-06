@@ -81,9 +81,14 @@ the rows you ticked.
 <img src="docs/images/panel-controls.png" width="420"
      alt="The settings menu of the panel with four actions: pause capture, stop watching browser API use, stop watching on this site, and clear this tab.">
 
-Recording pauses per tab, and watching page API use can be switched off for one site or entirely —
-page instrumentation is invisible to ordinary checks, but no instrumentation is invisible to every
-bot protection, so a site that reacts badly can simply be excluded. Network recording is unaffected.
+Recording pauses per tab, and watching page API use can be switched off for one site or entirely.
+Page API observation modifies browser functions and can conflict with site protections. Switching
+it off does not undo changes in an already-loaded page: close and reopen the tab. Site exclusions
+cover that site's URLs and subdomains; embedded pages from other sites may still be instrumented.
+For compatibility testing, switch API observation off entirely and open a fresh tab. Network
+recording continues in this mode, and no DomainScan scripts are injected into fresh pages. Passing a local compatibility check does not guarantee acceptance
+by any site's anti-bot service. An anonymized manual check reported restored access with the revised
+API-off mode; see [the compatibility note](docs/COMPATIBILITY.md) for the exact change and limits.
 
 ## Privacy and permissions
 
@@ -131,10 +136,13 @@ API and runs on sample data with every control working.
 
 ## Documentation
 
+- [docs/README.md](docs/README.md) - documentation index and scope of verification.
+- [CHANGELOG.md](CHANGELOG.md) - release history and update instructions.
+- [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) - passive mode and site compatibility limits.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the runtime contract: state model, attribution
   rules, messages, persistence.
 - [PRODUCT.md](PRODUCT.md) — audience, purpose and the principles the interface is held to.
-- [output/technical-audit.md](output/technical-audit.md) — the current audit and the platform limits
+- [docs/TECHNICAL_AUDIT.md](docs/TECHNICAL_AUDIT.md) — the current audit and the platform limits
   behind the decisions (in Russian).
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — the bundled Public Suffix List and its licence.
 

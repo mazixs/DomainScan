@@ -32,7 +32,8 @@ function method(returnValue) {
   };
 }
 
-function createProbeHarness({ install = true } = {}) {
+function createProbeHarness({ install = true, relayOrder = null } = {}) {
+  const relayMessages = [];
   function CanvasRenderingContext2D() {}
   function HTMLCanvasElement() {}
   function WebGLRenderingContext() {}
@@ -97,12 +98,28 @@ function createProbeHarness({ install = true } = {}) {
   const posted = [];
   class MessageChannel {
     constructor() {
+      const queue = [];
       this.port1 = {
+        onmessage: null,
         postMessage(data) {
           posted.push({ data });
+          if (relayOrder) {
+            if (port2.onmessage) port2.onmessage({ data });
+            else queue.push(data);
+          }
         }
       };
-      this.port2 = {};
+      const port1 = this.port1;
+      const port2 = {
+        onmessage: null,
+        start() {
+          for (const data of queue.splice(0)) this.onmessage({ data });
+        },
+        postMessage(data) {
+          if (port1.onmessage) port1.onmessage({ data });
+        }
+      };
+      this.port2 = port2;
     }
   }
   class MessageEvent {
@@ -111,8 +128,22 @@ function createProbeHarness({ install = true } = {}) {
       Object.assign(this, init);
     }
   }
+  const listeners = new Map();
   const window = {
-    dispatchEvent() {}
+    dispatchEvent(event) {
+      for (const entry of [...(listeners.get(event.type) || [])]) {
+        entry.listener(event);
+        if (entry.once) this.removeEventListener(event.type, entry.listener);
+      }
+    },
+    addEventListener(type, listener, options) {
+      const entries = listeners.get(type) || [];
+      entries.push({ listener, once: options?.once });
+      listeners.set(type, entries);
+    },
+    removeEventListener(type, listener) {
+      listeners.set(type, (listeners.get(type) || []).filter((entry) => entry.listener !== listener));
+    }
   };
   const network = {
     fetchCalls: 0,
@@ -139,6 +170,8 @@ function createProbeHarness({ install = true } = {}) {
     NavigatorUAData,
     MessageChannel,
     MessageEvent,
+    Event: MessageEvent,
+    chrome: { runtime: { sendMessage(payload, callback) { relayMessages.push(payload); callback(); } } },
     fetch() {
       network.fetchCalls += 1;
       throw new Error('network access is forbidden');
@@ -157,11 +190,15 @@ function createProbeHarness({ install = true } = {}) {
     resolvedOptions: DateTimeFormat.prototype.resolvedOptions
   };
 
+  if (relayOrder === 'before') vm.runInContext(relaySource, context);
   if (install) {
     vm.runInContext(probeSource, context, { filename: 'fingerprint-probe.js' });
   }
 
   return {
+    relayMessages,
+    installRelay: () => vm.runInContext(relaySource, context),
+    listeners,
     originals,
     // Evaluates page-side code inside the probe's own realm, so it sees the same
     // Function.prototype a real page script would see.
@@ -357,6 +394,7 @@ function createRelayHarness() {
       assert.equal(type, 'domainscan:probe-channel');
       channelListener = listener;
     },
+    dispatchEvent() {},
     // A same-origin frame can read the top-level location; the relay must still not
     // pass page-derived values to the extension.
     top: { location: { hostname: 'news.example' } }
@@ -370,11 +408,12 @@ function createRelayHarness() {
       }
     }
   };
-  const context = vm.createContext({ window, chrome });
+  const context = vm.createContext({ window, chrome, Event: class Event { constructor(type) { this.type = type; } } });
   vm.runInContext(relaySource, context, { filename: 'fingerprint-relay.js' });
   const probePort = {
     onmessage: null,
     start() {},
+    postMessage() {},
     send(data) {
       this.onmessage({ data });
     }
@@ -426,6 +465,7 @@ test('relay rejects a replacement channel and unknown signal vocabulary', () => 
   const replacement = {
     onmessage: null,
     start() {},
+    postMessage() {},
     send(data) {
       if (this.onmessage) this.onmessage({ data });
     }
@@ -574,3 +614,16 @@ test('asking for the debug renderer extension is itself the signal', () => {
     'the page reads the renderer itself, without us in the call'
   );
 });
+
+
+for (const order of ['before', 'after']) {
+  test(`dynamic relay receives early signals when it starts ${order} the probe`, () => {
+    const harness = createProbeHarness({ relayOrder: order });
+    harness.evaluate('new Date().getTimezoneOffset()');
+    if (order === 'after') harness.installRelay();
+    assert.deepEqual(harness.relayMessages.map((message) => message.signal), ['timezone']);
+    assert.equal(harness.listeners.get('domainscan:relay-ready').length, 0);
+    harness.evaluate('new Date().getTimezoneOffset()');
+    assert.equal(harness.relayMessages.length, 1);
+  });
+}

@@ -6,7 +6,7 @@ export const PORT_NAME = 'domainscan';
 
 export const MSG = {
   HELLO: 'HELLO',            // panel -> bg  { type, tabId }
-  STATE: 'STATE',            // bg -> panel  { type, state: TabState, settings: Settings }
+  STATE: 'STATE',            // bg -> panel { type, state, settings, settingsError, storageWriteFailed }
   SET_PAUSED: 'SET_PAUSED',  // panel -> bg  { type, paused: boolean }
   CLEAR: 'CLEAR',            // panel -> bg  { type }
   CHECKPOINT_REQUEST: 'CHECKPOINT_REQUEST', // panel -> bg { type }
@@ -20,6 +20,7 @@ export const MSG = {
 
 export const SETTINGS_KEY = 'settings';
 
+export const RELAY_SCRIPT_ID = 'domainscan-signal-relay';
 export const PROBE_SCRIPT_ID = 'domainscan-page-probe';
 
 export const STORAGE_PREFIX = 'tab:';

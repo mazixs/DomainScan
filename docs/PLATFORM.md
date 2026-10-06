@@ -1,10 +1,11 @@
 # DomainScan Product Facts
 
-Verified on 2026-07-17 against the official Chrome for Developers documentation.
+Platform reference snapshot verified on 2026-07-17 against the official Chrome for Developers documentation.
+Product surface updated from the repository on 2026-10-06.
 
 ## Product surface
 
-- DomainScan is a new, local Chrome extension project. No existing logo, visual identity, design system, or production UI is present in the repository.
+- DomainScan is a local Chrome extension with a side-panel interface, packaged icons, English and Russian locales, and documented design principles in `PRODUCT.md`.
 - The primary audience is privacy-conscious general users who want to understand which hosts a page contacts and where information may be sent.
 
 ## Current Chrome platform facts

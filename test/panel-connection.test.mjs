@@ -178,3 +178,18 @@ test('an older active-tab query cannot overwrite a newer binding or receive cont
   assert.deepEqual(chrome.ports[0].sent.at(-1), { type: MSG.CLEAR });
   connection.stop();
 });
+
+test('settings errors and recovery are forwarded with the bound tab state', async () => {
+  const chrome = fakeChrome(10);
+  const errors = [];
+  const connection = createPanelConnection({
+    chromeApi: chrome,
+    onState: (_state, _settings, _storageFailed, settingsError) => errors.push(settingsError)
+  });
+  await settle();
+  for (const settingsError of ['apply', 'save', 'load', null]) {
+    chrome.ports[0].onMessage.emit({ type: MSG.STATE, state: { tabId: 10 }, settingsError });
+  }
+  assert.deepEqual(errors, ['apply', 'save', 'load', null]);
+  connection.stop();
+});

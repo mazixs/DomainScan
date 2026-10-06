@@ -16,6 +16,7 @@ export function makeTabState(tabId, now = Date.now()) {
     destinations: {},
     fingerprint: { signals: {} },
     paused: false,
+    recordGeneration: 0,
     siteStartedAt: now,
     updatedAt: now
   };
@@ -49,6 +50,7 @@ export function applyTopLevelNavigation(state, url, now = Date.now()) {
     pageHost,
     destinations: changedSite ? {} : state.destinations,
     fingerprint: changedSite ? { signals: {} } : state.fingerprint,
+    recordGeneration: (state.recordGeneration || 0) + (changedSite ? 1 : 0),
     siteStartedAt: changedSite ? now : state.siteStartedAt,
     updatedAt: now
   };
@@ -71,7 +73,19 @@ export function destinationIdentity(value) {
   };
 }
 
+function replaceDestination(state, id, destination, now) {
+  return {
+    ...state,
+    destinations: { ...state.destinations, [id]: destination },
+    updatedAt: now
+  };
+}
+
 export function recordDestination(state, observation, now = Date.now()) {
+  return observeDestination(state, observation, now, replaceDestination);
+}
+
+function observeDestination(state, observation, now, replace) {
   const identity = destinationIdentity(observation && observation.value);
   if (!identity) return state;
   const { id, kind, value } = identity;
@@ -114,14 +128,7 @@ export function recordDestination(state, observation, now = Date.now()) {
     };
   }
 
-  return {
-    ...state,
-    destinations: {
-      ...state.destinations,
-      [id]: destination
-    },
-    updatedAt: now
-  };
+  return replace(state, id, destination, now);
 }
 
 const TRANSPORTS = new Set(['https', 'http', 'wss', 'ws', 'other']);
@@ -143,6 +150,10 @@ function withObserved(list, value, allowed, fallback) {
 }
 
 export function recordResolvedIp(state, host, ip, now = Date.now(), port = null) {
+  return observeResolvedIp(state, host, ip, now, port, replaceDestination);
+}
+
+function observeResolvedIp(state, host, ip, now, port, replace) {
   const rawValue = normalizeHostname(host);
   const value = normalizeIpLiteral(rawValue) || rawValue;
   const normalizedIp = normalizeIpLiteral(ip);
@@ -168,20 +179,39 @@ export function recordResolvedIp(state, host, ip, now = Date.now(), port = null)
         count: 1
       };
 
+  return replace(state, id, {
+    ...destination,
+    ips: { ...(destination.ips || {}), [normalizedIp]: address },
+    lastSeen: now
+  }, now);
+}
+
+/** A private per-tab draft. Publishing a snapshot seals its table until the next write. */
+export function createTabStateAccumulator() {
+  let destinations = null;
+  let shared = true;
+
+  function replace(state, id, destination, now) {
+    if (shared || destinations !== state.destinations) {
+      destinations = { ...state.destinations };
+      shared = false;
+    }
+    destinations[id] = destination;
+    return { ...state, destinations, updatedAt: now };
+  }
+
   return {
-    ...state,
-    destinations: {
-      ...state.destinations,
-      [id]: {
-        ...destination,
-        ips: {
-          ...(destination.ips || {}),
-          [normalizedIp]: address
-        },
-        lastSeen: now
-      }
+    recordDestination(state, observation, now = Date.now()) {
+      return observeDestination(state, observation, now, replace);
     },
-    updatedAt: now
+    recordResolvedIp(state, host, ip, now = Date.now(), port = null) {
+      return observeResolvedIp(state, host, ip, now, port, replace);
+    },
+    snapshot(state) {
+      destinations = state.destinations;
+      shared = true;
+      return state;
+    }
   };
 }
 
@@ -364,6 +394,8 @@ export function normalizeTabState(value, now = Date.now()) {
     destinations,
     fingerprint: normalizeFingerprint(source.fingerprint, updatedAt),
     paused: !!source.paused,
+    recordGeneration: Number.isSafeInteger(source.recordGeneration) && source.recordGeneration >= 0
+      ? source.recordGeneration : 0,
     siteStartedAt: Number.isFinite(source.siteStartedAt) ? source.siteStartedAt : updatedAt,
     updatedAt
   };

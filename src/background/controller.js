@@ -3,6 +3,7 @@ import {
   PORT_NAME,
   MSG,
   PROBE_SCRIPT_ID,
+  RELAY_SCRIPT_ID,
   SETTINGS_KEY,
   STORAGE_PREFIX,
   tabKey
@@ -15,6 +16,7 @@ import {
 } from '../lib/domain.js';
 import {
   applyTopLevelNavigation,
+  createTabStateAccumulator,
   destinationIdentity,
   makeTabState,
   normalizeTabState,
@@ -80,6 +82,14 @@ const PROBE_SCRIPT = Object.freeze({
   persistAcrossSessions: true
 });
 
+const RELAY_SCRIPT = Object.freeze({
+  ...PROBE_SCRIPT,
+  id: RELAY_SCRIPT_ID,
+  js: ['src/content/fingerprint-relay.js'],
+  world: 'ISOLATED'
+});
+const PAGE_SCRIPT_IDS = [RELAY_SCRIPT_ID, PROBE_SCRIPT_ID];
+
 const DEFAULT_SETTINGS = Object.freeze({ observePageApis: true, excludedSites: [] });
 
 function normalizeSettings(value) {
@@ -101,6 +111,7 @@ export function createBackgroundController(
   { now = () => Date.now(), logger = console } = {}
 ) {
   const tabs = new Map();
+  const accumulators = new Map();
   const portBindings = new Map();
   const subscribers = new Map();
   const persistence = new Map();
@@ -111,6 +122,7 @@ export function createBackgroundController(
   const pendingDelivery = new Set();
   let deliveryTimer = null;
   let settings = { ...DEFAULT_SETTINGS };
+  let settingsError = null;
 
   function diagnose(operation, error, tabId) {
     try {
@@ -135,9 +147,15 @@ export function createBackgroundController(
     // The choice about page instrumentation has to be in force before the first
     // page of the session is instrumented, so it is loaded and applied first.
     .then(() => loadSettings())
-    .catch((error) => diagnose('storage.local.get', error))
-    .then(() => syncProbeRegistration())
-    .catch((error) => diagnose('scripting.register', error))
+    .catch((error) => {
+      diagnose('storage.local.get', error);
+      settingsError = 'load';
+    })
+    .then(() => settingsError === 'load' ? undefined : syncProbeRegistration())
+    .catch((error) => {
+      diagnose('scripting.register', error);
+      settingsError = 'apply';
+    })
     // Requests observed before the first navigation of a session have no site to
     // belong to, so every open tab is seeded from the browser's own committed URL.
     .then(() => seedOpenTabs())
@@ -149,33 +167,54 @@ export function createBackgroundController(
     settings = normalizeSettings(stored && stored[SETTINGS_KEY]);
   }
 
-  async function saveSettings() {
+  async function saveSettings(nextSettings) {
     if (!chromeApi.storage.local) return;
-    await chromeApi.storage.local.set({ [SETTINGS_KEY]: settings });
+    await chromeApi.storage.local.set({ [SETTINGS_KEY]: nextSettings });
   }
 
-  // The MAIN-world probe is registered dynamically so it can be switched off for one
-  // site or for all of them. Chrome keeps a registered script across restarts, so a
-  // page is never instrumented before the choice is known.
-  async function syncProbeRegistration() {
+  // Both page scripts follow the same choice. With observation off, fresh
+  // documents contain no DomainScan content scripts in either execution world.
+  async function syncProbeRegistration(nextSettings = settings) {
     const scripting = chromeApi.scripting;
     if (!scripting || typeof scripting.getRegisteredContentScripts !== 'function') return;
-    const registered = await scripting.getRegisteredContentScripts({ ids: [PROBE_SCRIPT_ID] });
-    if (!settings.observePageApis) {
-      if (registered.length > 0) await scripting.unregisterContentScripts({ ids: [PROBE_SCRIPT_ID] });
+    const registered = await scripting.getRegisteredContentScripts({ ids: PAGE_SCRIPT_IDS });
+    if (!nextSettings.observePageApis) {
+      if (registered.length > 0) await scripting.unregisterContentScripts({ ids: registered.map((script) => script.id) });
       return;
     }
-    const script = { ...PROBE_SCRIPT, excludeMatches: excludePatterns(settings.excludedSites) };
-    if (registered.length > 0) await scripting.updateContentScripts([script]);
-    else await scripting.registerContentScripts([script]);
+    const scripts = [RELAY_SCRIPT, PROBE_SCRIPT].map((script) => ({
+      ...script, excludeMatches: excludePatterns(nextSettings.excludedSites)
+    }));
+    if (registered.length === scripts.length) {
+      await scripting.updateContentScripts(scripts);
+    } else {
+      // Upgrade older installations that only registered the MAIN-world probe.
+      // Rebuild the pair together, with the receiving relay registered first.
+      if (registered.length > 0) await scripting.unregisterContentScripts({ ids: registered.map((script) => script.id) });
+      await scripting.registerContentScripts(scripts);
+    }
   }
 
   // The panel is told only after the change is actually in force, so it never claims
   // a page is unwatched while the probe is still registered.
   async function applySettings(next) {
-    settings = normalizeSettings(next);
-    await syncProbeRegistration().catch((error) => diagnose('scripting.update', error));
-    await saveSettings().catch((error) => diagnose('storage.local.set', error));
+    const nextSettings = normalizeSettings(next);
+    try {
+      await syncProbeRegistration(nextSettings);
+    } catch (error) {
+      diagnose('scripting.update', error);
+      settingsError = 'apply';
+      for (const tabId of subscribers.keys()) pushState(tabId);
+      return;
+    }
+    settings = nextSettings;
+    settingsError = null;
+    try {
+      await saveSettings(nextSettings);
+    } catch (error) {
+      diagnose('storage.local.set', error);
+      settingsError = 'save';
+    }
     for (const tabId of subscribers.keys()) deliver(tabId);
   }
 
@@ -210,6 +249,15 @@ export function createBackgroundController(
     return state;
   }
 
+  function accumulator(tabId) {
+    if (!accumulators.has(tabId)) accumulators.set(tabId, createTabStateAccumulator());
+    return accumulators.get(tabId);
+  }
+
+  function snapshot(state) {
+    return accumulator(state.tabId).snapshot(state);
+  }
+
   function persist(state) {
     const previous = persistence.get(state.tabId) || Promise.resolve();
     const next = previous
@@ -226,11 +274,12 @@ export function createBackgroundController(
   }
 
   function pushState(tabId) {
-    const state = tabs.get(tabId);
+    const current = tabs.get(tabId);
+    const state = current && snapshot(current);
     if (!state) return;
     for (const port of subscribers.get(tabId) || []) {
       try {
-        port.postMessage({ type: MSG.STATE, state, settings, storageWriteFailed: failedWrites.has(tabId) });
+        port.postMessage({ type: MSG.STATE, state, settings, settingsError, storageWriteFailed: failedWrites.has(tabId) });
       } catch (error) {
         diagnose('port.postMessage', error, tabId);
       }
@@ -258,7 +307,8 @@ export function createBackgroundController(
 
   function deliver(tabId) {
     pendingDelivery.delete(tabId);
-    const state = tabs.get(tabId);
+    const current = tabs.get(tabId);
+    const state = current && snapshot(current);
     if (!state) return;
     pushState(tabId);
     persist(state);
@@ -288,7 +338,7 @@ export function createBackgroundController(
       subscribers.set(tabId, ports);
     }
     ports.add(port);
-    port.postMessage({ type: MSG.STATE, state: getOrCreate(tabId), settings, storageWriteFailed: failedWrites.has(tabId) });
+    port.postMessage({ type: MSG.STATE, state: snapshot(getOrCreate(tabId)), settings, settingsError, storageWriteFailed: failedWrites.has(tabId) });
   }
 
   function onBeforeRequest(details) {
@@ -325,6 +375,7 @@ export function createBackgroundController(
         port: requestPort(parsed),
         requestId: typeof requestId === 'string' ? requestId : null,
         documentId: typeof documentId === 'string' ? documentId : null,
+        captured: !state.paused,
         ip: null
       });
     } else if (type === 'sub_frame' && typeof documentId === 'string') {
@@ -333,15 +384,14 @@ export function createBackgroundController(
         documents.ids.add(documentId);
       }
     }
+    if (state.paused) return;
     if (typeof requestId === 'string') {
       requestSites.set(requestId, {
         host: normalizeHostname(parsed.hostname),
-        targets: [{ tabId, siteKey: state.siteKey }]
+        targets: [{ tabId, siteKey: state.siteKey, recordGeneration: state.recordGeneration }]
       });
     }
-    if (state.paused) return;
-
-    commit(recordDestination(state, {
+    commit(accumulator(tabId).recordDestination(state, {
       value: parsed.hostname,
       party: classifyParty(parsed.hostname, state.pageHost),
       requestType: mapRequestType(type),
@@ -379,7 +429,9 @@ export function createBackgroundController(
 
     const targets = [];
     for (const [tabId, state] of tabs) {
-      if (state.pageUrl === initiator) targets.push({ tabId, siteKey: state.siteKey });
+      if (state.pageUrl === initiator && !state.paused) {
+        targets.push({ tabId, siteKey: state.siteKey, recordGeneration: state.recordGeneration });
+      }
     }
     if (targets.length === 0) return;
 
@@ -389,7 +441,7 @@ export function createBackgroundController(
     for (const target of targets) {
       const state = tabs.get(target.tabId);
       if (!state || state.paused) continue;
-      commit(recordDestination(state, {
+      commit(accumulator(target.tabId).recordDestination(state, {
         value: parsed.hostname,
         party: classifyParty(parsed.hostname, state.pageHost),
         requestType: mapRequestType(type),
@@ -427,7 +479,7 @@ export function createBackgroundController(
     const identity = destinationIdentity(host);
 
     // Only an observed request may become a destination; a restored page made none.
-    if (committed && identity && !state.paused && !state.destinations[identity.id]) {
+    if (committed && committed.captured && identity && !state.paused && !state.destinations[identity.id]) {
       state = recordDestination(state, {
         value: host,
         party: classifyParty(host, state.pageHost),
@@ -453,7 +505,10 @@ export function createBackgroundController(
     currentDocuments.delete(tabId);
     const previous = tabs.get(tabId);
     if (!previous || (!previous.siteKey && Object.keys(previous.destinations).length === 0)) return;
-    commit({ ...makeTabState(tabId, now()), paused: previous.paused }, { immediate: true });
+    commit({
+      ...makeTabState(tabId, now()), paused: previous.paused,
+      recordGeneration: (previous.recordGeneration || 0) + 1
+    }, { immediate: true });
   }
 
 
@@ -481,8 +536,9 @@ export function createBackgroundController(
     for (const target of requestSite.targets) {
       if (Number.isInteger(tabId) && tabId >= 0 && target.tabId !== tabId) continue;
       const state = tabs.get(target.tabId);
-      if (!state || state.paused || state.siteKey !== target.siteKey) continue;
-      const next = recordResolvedIp(state, parsed.hostname, ip, now(), requestPort(parsed));
+      if (!state || state.paused || state.siteKey !== target.siteKey ||
+          state.recordGeneration !== target.recordGeneration) continue;
+      const next = accumulator(target.tabId).recordResolvedIp(state, parsed.hostname, ip, now(), requestPort(parsed));
       if (next !== state) commit(next);
     }
   }
@@ -536,7 +592,7 @@ export function createBackgroundController(
         const state = getOrCreate(tabId);
         if (message.type === MSG.CHECKPOINT_REQUEST) {
           try {
-            port.postMessage({ type: MSG.CHECKPOINT_READY, tabId, state, at: now() });
+            port.postMessage({ type: MSG.CHECKPOINT_READY, tabId, state: snapshot(state), at: now() });
           } catch (error) {
             diagnose('port.postMessage', error, tabId);
           }
@@ -550,10 +606,12 @@ export function createBackgroundController(
             : [...settings.excludedSites, siteKey];
           return applySettings({ ...settings, excludedSites });
         } else if (message.type === MSG.CLEAR) {
+          pendingNavigations.delete(tabId);
           commit({
             ...state,
             destinations: {},
             fingerprint: { signals: {} },
+            recordGeneration: (state.recordGeneration || 0) + 1,
             updatedAt: now()
           }, { immediate: true });
         }
@@ -632,6 +690,7 @@ export function createBackgroundController(
   chromeApi.tabs.onRemoved.addListener((tabId) => {
     enqueue('tabs.onRemoved', async () => {
       tabs.delete(tabId);
+      accumulators.delete(tabId);
       currentDocuments.delete(tabId);
       pendingNavigations.delete(tabId);
       pendingDelivery.delete(tabId);
@@ -666,7 +725,8 @@ export function createBackgroundController(
   return {
     ready,
     getState(tabId) {
-      return tabs.get(tabId);
+      const state = tabs.get(tabId);
+      return state && snapshot(state);
     },
     async flush() {
       await work;
